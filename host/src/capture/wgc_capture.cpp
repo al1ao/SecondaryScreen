@@ -1,4 +1,5 @@
 #include "capture/wgc_capture.h"
+#include "capture/frame_pacer.h"
 #include <atomic>
 #include <deque>
 #include <mutex>
@@ -22,6 +23,8 @@ struct WgcCapture::Impl {
         std::deque<GpuFrame> frames;
         std::atomic<bool> stopped{false}, failed{false};
         std::atomic<uint64_t> dropped{0};
+        std::atomic<uint64_t> throttled{0}, received{0}, copied{0};
+        FramePacer pacer;
     };
     explicit Impl(bool cursor) : show_cursor(cursor) {}
     ~Impl() { StopCapture(); }
@@ -47,6 +50,11 @@ struct WgcCapture::Impl {
 };
 WgcCapture::WgcCapture(bool show_cursor) : impl_(std::make_unique<Impl>(show_cursor)) {}
 WgcCapture::~WgcCapture() = default;
+bool WgcCapture::ConfigureThrottle(bool enabled, uint32_t target_fps) {
+    if (impl_->pool || target_fps == 0 || target_fps > 60) return false;
+    impl_->state->pacer = FramePacer(enabled, target_fps);
+    return true;
+}
 bool WgcCapture::Initialize(ID3D11Device* device, uint32_t width, uint32_t height) {
     const auto monitor = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
     if (!monitor) { LOG_HR(LastErrorHr(), "MonitorFromPoint primary"); return false; }
@@ -88,10 +96,17 @@ bool WgcCapture::InitializeForMonitor(ID3D11Device* device, HMONITOR monitor, ui
             try {
                 auto frame = pool.TryGetNextFrame();
                 if (!frame) return;
+                state->received.fetch_add(1);
                 const auto content = frame.ContentSize();
                 if (content.Width != size.Width || content.Height != size.Height) {
                     if (!state->failed.exchange(true)) LOG_WARN("Selected display resized; reconnect to recreate WGC");
                     return;
+                }
+                {
+                    std::lock_guard lock(state->mutex);
+                    // Drain/release every pool frame, even when rejecting it.
+                    // Gate before texture allocation, CopyResource or encoding.
+                    if (!state->pacer.Accept(NowUs())) { state->throttled.fetch_add(1); return; }
                 }
                 auto access = frame.Surface().template as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
                 ComPtr<ID3D11Texture2D> source, owned;
@@ -107,6 +122,7 @@ bool WgcCapture::InitializeForMonitor(ID3D11Device* device, HMONITOR monitor, ui
                     // texture that the encoder still owns, even when the WGC pool recycles.
                     state->context->CopyResource(owned.Get(), source.Get());
                 }
+                state->copied.fetch_add(1);
                 GpuFrame output{owned, static_cast<uint32_t>(size.Width), static_cast<uint32_t>(size.Height), NowUs()};
                 std::lock_guard lock(state->mutex);
                 if (state->stopped.load()) return;
@@ -150,6 +166,9 @@ bool WgcCapture::Capture(GpuFrame& out) {
 uint32_t WgcCapture::Width() const { return impl_->width; }
 uint32_t WgcCapture::Height() const { return impl_->height; }
 uint64_t WgcCapture::Dropped() const { return impl_->state->dropped.load(); }
+uint64_t WgcCapture::Throttled() const { return impl_->state->throttled.load(); }
+uint64_t WgcCapture::Received() const { return impl_->state->received.load(); }
+uint64_t WgcCapture::Copied() const { return impl_->state->copied.load(); }
 bool WgcCapture::Failed() const { return impl_->state->failed.load(); }
 std::unique_ptr<IGpuCapture> CreateWgcCapture() { return CreateWgcCapture(true); }
 std::unique_ptr<IGpuCapture> CreateWgcCapture(bool show_cursor) { return std::make_unique<WgcCapture>(show_cursor); }

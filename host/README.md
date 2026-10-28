@@ -1,8 +1,8 @@
 # PadScreen
 
-当前代码包含阶段 3 的虚拟显示器选择、VDD 安装/卸载脚本和分辨率协商，并保留阶段 1/2 的 GDI/JPEG、WGC/MF H264。
-请优先阅读 [阶段 3 构建运行说明](README-stage3.md) 和 [阶段 3 自检记录](ACCEPTANCE-stage3.md)。默认采集虚拟扩展屏；旧主屏调试命令现在需要加 `--capture-primary`。
-阶段 2 的 PC H264 链路与 30 分钟测试已验证；阶段 3 尚无指定 VDD 安装与虚拟屏完整链路证据，Android 仍无真机。历史阶段 1/2 说明见下文及 [阶段 2 记录](ACCEPTANCE-stage2.md)。
+当前代码包含阶段 4 的 WGC 复制前节流和可配置队列，保留阶段 3 的虚拟屏选择、VDD 脚本，以及阶段 1/2 的 GDI/JPEG、WGC/MF H264。
+请优先阅读 [阶段 4 构建运行说明](README-stage4.md) 和 [性能记录](../docs/perf-log.md)。默认采集虚拟扩展屏；主屏调试需要加 `--capture-primary`。
+用户已确认阶段 1/2/3 的 PC 链路验收。阶段 4 的当次测量与环境限制单独记录；Android 仍无真机。阶段 3 的原始交付记录见 [阶段 3 自检](ACCEPTANCE-stage3.md)，历史阶段 1/2 说明见下文及 [阶段 2 记录](ACCEPTANCE-stage2.md)。
 
 ## 阶段 1 历史说明
 

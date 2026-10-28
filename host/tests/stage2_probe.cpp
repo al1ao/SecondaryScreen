@@ -23,6 +23,13 @@ public:
         Check(GetProcessMemoryInfo(handle_, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) != FALSE, "process memory");
         return counters.PrivateUsage;
     }
+    uint64_t CpuUs() const {
+        if (!handle_) return 0;
+        FILETIME created{}, exited{}, kernel{}, user{};
+        Check(GetProcessTimes(handle_, &created, &exited, &kernel, &user) != FALSE, "process CPU time");
+        auto ticks = [](const FILETIME& value) { return (static_cast<uint64_t>(value.dwHighDateTime) << 32) | value.dwLowDateTime; };
+        return (ticks(kernel) + ticks(user)) / 10;
+    }
 private:
     HANDLE handle_ = nullptr;
 };
@@ -73,6 +80,7 @@ int main(int argc, char** argv) {
         if (!output_file.empty()) { saved.open(output_file, std::ios::binary); Check(saved.is_open(), "open H264 output file"); }
         ProcessMetrics metrics(pid);
         const auto connection_memory = metrics.Memory();
+        const auto cpu_start_us = metrics.CpuUs();
         const auto began = pds::NowUs();
         auto log_time = began;
         uint64_t frames = 0, bytes = 0, keys = 0, latency_total = 0, latency_max = 0, gaps = 0;
@@ -136,7 +144,8 @@ int main(int argc, char** argv) {
             " private_start=", initial_memory, " private_end=", final_memory,
             " private_growth=", static_cast<int64_t>(final_memory) - static_cast<int64_t>(initial_memory),
             " private_connected=", connection_memory, " private_peak_sampled=", peak_memory,
-            " private_growth_from_connect=", static_cast<int64_t>(final_memory) - static_cast<int64_t>(connection_memory));
+            " private_growth_from_connect=", static_cast<int64_t>(final_memory) - static_cast<int64_t>(connection_memory),
+            " host_cpu_single_core_pct=", static_cast<double>(metrics.CpuUs() - cpu_start_us) / (elapsed * 1000000.0) * 100.0);
         if (ack.codec == 2) {
             for (size_t type = 0; type < slice_counts.size(); ++type)
                 LOG_INFO("PROBE slice_type[", type, "]=", slice_counts[type]);

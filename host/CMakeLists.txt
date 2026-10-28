@@ -15,6 +15,7 @@ add_library(padscreen-core STATIC
     src/display/monitor_enum.cpp
     src/encode/jpeg_encoder.cpp
     src/encode/mf_h264_encoder.cpp
+    src/encode/mf_event_waiter.cpp
     src/encode/encoder_factory.cpp
     src/encode/h264_annex_b.cpp
     src/encode/gpu_nv12_converter.cpp
@@ -46,6 +47,9 @@ if(BUILD_TESTING)
     add_executable(padscreen-stage3-tests tests/stage3_tests.cpp)
     target_link_libraries(padscreen-stage3-tests PRIVATE padscreen-core)
     add_test(NAME stage3-display COMMAND padscreen-stage3-tests)
+    add_executable(padscreen-stage4-tests tests/stage4_tests.cpp)
+    target_link_libraries(padscreen-stage4-tests PRIVATE padscreen-core)
+    add_test(NAME stage4-cadence COMMAND padscreen-stage4-tests)
     add_executable(padscreen-stage2-probe tests/stage2_probe.cpp)
     target_link_libraries(padscreen-stage2-probe PRIVATE padscreen-core psapi)
 endif()

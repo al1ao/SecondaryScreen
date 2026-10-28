@@ -210,7 +210,7 @@ void HardwareTest(ID3D11Device* device) {
     LOG_INFO("HARDWARE BENCH encode_avg_ms=", static_cast<double>(encode_total) / static_cast<double>(encode_times.size()) / 1000.0,
         " encode_p95_ms=", static_cast<double>(encode_times[(encode_times.size() - 1) * 95 / 100]) / 1000.0,
         " encode_max_ms=", static_cast<double>(encode_times.back()) / 1000.0,
-        " (GPU shader + MFT completion observed by event polling; synthetic color pattern)");
+        " (GPU shader + MFT completion observed by bounded event wait; synthetic color pattern)");
     LOG_INFO("PASS: real MF hardware H264 frames=", encoded_count, " keyframes=", keys, " name=", encoder->Name());
     LOG_INFO("HARDWARE slices P=", slice_counts[0] + slice_counts[5], " B=", slice_counts[1] + slice_counts[6],
         " I=", slice_counts[2] + slice_counts[7]);

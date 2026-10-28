@@ -13,6 +13,7 @@
 #include <thread>
 #include <unordered_map>
 #include "encode/gpu_nv12_converter.h"
+#include "encode/mf_event_waiter.h"
 #include "encode/h264_annex_b.h"
 #include "protocol/protocol.h"
 #include "util/timer.h"
@@ -29,7 +30,7 @@ public:
         if (active_) return;
         const auto result = timeBeginPeriod(1);
         active_ = result == TIMERR_NOERROR;
-        if (active_) LOG_INFO("MF encoder requested 1ms timer resolution for bounded event polling");
+        if (active_) LOG_INFO("MF encoder requested 1ms timer resolution for bounded waits");
         else LOG_WARN("timeBeginPeriod(1) unavailable, MMRESULT=", result);
     }
     void Stop() {
@@ -100,11 +101,12 @@ bool EnsureMediaFoundation() { static MfRuntime runtime; return runtime.Ready();
 struct MfH264Encoder::Impl {
     ~Impl() { Reset(); }
     void Reset() {
+        if (event_waiter) event_waiter->Stop();
         if (transform) {
             LOG_HR(transform->ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0), "MF end of stream");
             LOG_HR(transform->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0), "MF flush");
         }
-        events.Reset(); api.Reset();
+        event_waiter.Reset(); events.Reset(); api.Reset();
         if (activation) LOG_HR(activation->ShutdownObject(), "MF hardware ShutdownObject");
         transform.Reset(); activation.Reset(); manager.Reset();
         pending.clear(); submitted.clear(); input_tokens = 0; output_tokens = 0;
@@ -154,9 +156,11 @@ struct MfH264Encoder::Impl {
             !LOG_HR(MFCreateMediaType(input.GetAddressOf()), "MF input type") ||
             !ConfigureVideoType(input.Get(), MFVideoFormat_NV12, width, height, fps) ||
             !LOG_HR(transform->SetInputType(0, input.Get(), 0), "MF SetInputType NV12")) return false;
-        // TODO(design): retain bounded polling in stage 2. Request 1ms resolution
-        // while the encoder is active so sleep_for(1ms) avoids coarse timer ticks.
-        // This is a process timer request, not a thread priority or fps change.
+        if (asynchronous) {
+            event_waiter = Microsoft::WRL::Make<MfEventWaiter>();
+            if (!event_waiter || !LOG_HR(event_waiter->Start(events.Get()), "MF BeginGetEvent")) return false;
+        }
+        // Preserve the paired timer request for synchronous-MFT fallback waits.
         timer_resolution.Start();
         if (!LOG_HR(transform->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0), "MF begin streaming") ||
             !LOG_HR(transform->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0), "MF start stream")) return false;
@@ -227,7 +231,9 @@ struct MfH264Encoder::Impl {
         // MF sample times are 100 ns: microseconds * 10 on input, / 10 on output.
         frame.capture_ts_us = static_cast<uint64_t>(sample_time / 10);
         const auto found = submitted.find(sample_time);
-        if (found != submitted.end()) { last_encode_us = NowUs() - found->second; submitted.erase(found); }
+        if (found == submitted.end()) { healthy = false; LOG_ERROR("MF output PTS does not match submitted input"); return false; }
+        const auto elapsed_us = NowUs() - found->second;
+        submitted.erase(found);
         if (!MakeH264AccessUnit(copy, parameters, frame.data, frame.keyframe)) {
             LOG_WARN("Dropped H264 output without complete SPS/PPS+IDR or valid Annex-B access unit");
             need_keyframe = true;
@@ -235,7 +241,7 @@ struct MfH264Encoder::Impl {
         }
         if (frame.data.size() > kMaxPayload - sizeof(FrameInfo)) { healthy = false; LOG_ERROR("H264 output exceeds protocol limit"); return false; }
         if (HasH264BSlice(frame.data)) { healthy = false; LOG_ERROR("Actual H264 bitstream contains B slices; rejecting hardware backend: ", name); return false; }
-        pending.push_back(std::move(frame));
+        pending.push_back({std::move(frame), elapsed_us});
         return true;
     }
     void PumpEvents() {
@@ -246,9 +252,9 @@ struct MfH264Encoder::Impl {
         }
         for (unsigned n = 0; n < 64 && healthy; ++n) {
             ComPtr<IMFMediaEvent> event;
-            const auto hr = events->GetEvent(MF_EVENT_FLAG_NO_WAIT, event.GetAddressOf());
+            const auto hr = event_waiter->Pop(event.GetAddressOf());
             if (hr == MF_E_NO_EVENTS_AVAILABLE) break;
-            if (!LOG_HR(hr, "MF GetEvent")) { healthy = false; break; }
+            if (!LOG_HR(hr, "MF event mailbox")) { healthy = false; break; }
             HRESULT event_status = S_OK;
             MediaEventType type = MEUnknown;
             if (!LOG_HR(event->GetStatus(&event_status), "MF event status") || !LOG_HR(event_status, "MF hardware event") ||
@@ -261,17 +267,24 @@ struct MfH264Encoder::Impl {
     }
     bool TakeOutput(EncodedFrame& out) {
         if (pending.empty()) return false;
-        out = std::move(pending.front()); pending.pop_front(); return true;
+        last_encode_us = pending.front().elapsed_us;
+        out = std::move(pending.front().frame); pending.pop_front(); return true;
+    }
+    void WaitForEvent(std::chrono::steady_clock::time_point deadline) {
+        if (asynchronous) event_waiter->WaitUntil(deadline);
+        else std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     ComPtr<IMFActivate> activation;
     ComPtr<IMFTransform> transform;
     ComPtr<ICodecAPI> api;
     ComPtr<IMFMediaEventGenerator> events;
+    ComPtr<MfEventWaiter> event_waiter;
     ComPtr<IMFDXGIDeviceManager> manager;
     TimerResolution timer_resolution;
     GpuNv12Converter converter;
     H264Parameters parameters;
-    std::deque<EncodedFrame> pending;
+    struct Output { EncodedFrame frame; uint64_t elapsed_us; };
+    std::deque<Output> pending;
     std::unordered_map<LONGLONG, uint64_t> submitted;
     std::string name = "MF H.264 hardware";
     uint32_t width = 0, height = 0, fps = 0, bitrate = 0;
@@ -325,7 +338,7 @@ bool MfH264Encoder::Encode(ID3D11Texture2D* input, uint64_t capture_ts_us, Encod
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(20);
     while (p.healthy && p.asynchronous && p.input_tokens == 0 && std::chrono::steady_clock::now() < deadline) {
         p.PumpEvents();
-        if (p.input_tokens == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (p.healthy && p.input_tokens == 0) p.WaitForEvent(deadline);
     }
     if (!p.healthy) return false;
     if (p.asynchronous && p.input_tokens == 0) return p.TakeOutput(out);
@@ -347,15 +360,17 @@ bool MfH264Encoder::Encode(ID3D11Texture2D* input, uint64_t capture_ts_us, Encod
     if (p.asynchronous) --p.input_tokens;
     p.submitted.emplace(pts, started);
     if (p.submitted.size() > 16) { LOG_ERROR("MF encoder stalled with too many in-flight samples"); p.healthy = false; return false; }
-    if (p.TakeOutput(out)) return true;
     const auto output_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10);
     do {
         p.PumpEvents();
-        if (p.TakeOutput(out)) return true;
         if (!p.healthy) return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // Also observe this input's completion when older output is queued.
+        // Returning the older frame immediately would lock the pipeline into
+        // observing every subsequent output one capture interval late.
+        if (!p.submitted.contains(pts)) break;
+        p.WaitForEvent(output_deadline);
     } while (std::chrono::steady_clock::now() < output_deadline);
-    return false;
+    return p.TakeOutput(out);
 }
 bool MfH264Encoder::Poll(EncodedFrame& out) { impl_->PumpEvents(); return impl_->TakeOutput(out); }
 bool MfH264Encoder::Healthy() const { return impl_->healthy; }

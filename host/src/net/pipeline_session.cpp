@@ -36,7 +36,7 @@ private:
 };
 }
 struct PipelineSession::Impl {
-    Impl(UniqueSocket value, SessionOptions opts) : socket(std::move(value)), options(opts) {}
+    Impl(UniqueSocket value, SessionOptions opts) : socket(std::move(value)), options(opts), raw(opts.queue_depth), packets(opts.queue_depth) {}
     ~Impl() { Stop(); if (receiver.joinable()) receiver.join(); }
     void Stop() {
         if (!running.exchange(false)) return;
@@ -105,6 +105,7 @@ struct PipelineSession::Impl {
             monitor = *resized;
         }
         LOG_INFO("Session selected display: ", Utf8(monitor.device_name), " (", Utf8(monitor.friendly_name), ") ", monitor.width, 'x', monitor.height);
+        LOG_INFO("Pipeline options: wgc_throttle=", options.wgc_throttle ? "on" : "off", " queue_depth=", options.queue_depth);
         width = options.width; height = options.height;
         if (!options.capture_primary) {
             const auto size = NegotiateResolution(monitor.width, monitor.height, hello.preferred_width, hello.preferred_height,
@@ -131,6 +132,10 @@ struct PipelineSession::Impl {
                 gpu_encoder = CreateBestEncoder(device.Get(), width, height, fps, options.bitrate_kbps);
                 if (!gpu_encoder) continue;
                 auto capture = std::make_unique<WgcCapture>(options.show_cursor);
+                if (!capture->ConfigureThrottle(options.wgc_throttle, fps)) {
+                    LOG_ERROR("Invalid WGC throttle configuration");
+                    ack.result = static_cast<uint16_t>(HelloResult::Resolution); return;
+                }
                 const bool initialized = capture->InitializeForMonitor(device.Get(), monitor.hmonitor, width, height);
                 gpu_capture = std::move(capture);
                 if (initialized) {
@@ -218,6 +223,14 @@ struct PipelineSession::Impl {
         RawFrame input;
         uint32_t id = 0;
         bool first_input = true;
+        const auto enqueue = [&](Packet& packet, uint64_t began) {
+            encode_us.fetch_add(codec == Codec::H264 ? static_cast<MfH264Encoder*>(gpu_encoder.get())->LastEncodeTimeUs() : NowUs() - began);
+            encoded.fetch_add(1);
+            packet.id = ++id;
+            const auto dropped = packets.Push(std::move(packet));
+            encoded_dropped.fetch_add(dropped);
+            if (dropped != 0 && codec == Codec::H264) force_keyframe.store(true);
+        };
         while (raw.Pop(input, stop.get_token())) {
             if (first_input) { LOG_INFO("Encoding first captured frame"); first_input = false; }
             Packet packet;
@@ -228,14 +241,15 @@ struct PipelineSession::Impl {
                 produced = gpu_encoder->Encode(input.gpu.texture.Get(), input.gpu.capture_ts_us, packet.frame);
                 if (!static_cast<MfH264Encoder*>(gpu_encoder.get())->Healthy()) { LOG_ERROR("MF encoder failed; closing session for renegotiation"); Stop(); break; }
             } else produced = jpeg_encoder->Encode(input.cpu, packet.frame);
-            if (produced) {
-                encode_us.fetch_add(codec == Codec::H264 ? static_cast<MfH264Encoder*>(gpu_encoder.get())->LastEncodeTimeUs() : NowUs() - began);
-                encoded.fetch_add(1);
-                packet.id = ++id;
-                const auto dropped = packets.Push(std::move(packet));
-                encoded_dropped.fetch_add(dropped);
-                if (dropped != 0 && codec == Codec::H264) force_keyframe.store(true);
-            } else if (codec == Codec::JPEG) LOG_WARN("JPEG encode failed; skipping frame");
+            if (produced) enqueue(packet, began);
+            else if (codec == Codec::JPEG) LOG_WARN("JPEG encode failed; skipping frame");
+            if (codec == Codec::H264) {
+                // A deadline miss can leave both the previous and current
+                // sample ready. Drain both now instead of retaining one forever.
+                auto* hardware = static_cast<MfH264Encoder*>(gpu_encoder.get());
+                while (hardware->Poll(packet.frame)) enqueue(packet, began);
+                if (!hardware->Healthy()) { LOG_ERROR("MF output drain failed; reconnect required"); Stop(); break; }
+            }
         }
     }
     void Send() {
@@ -260,7 +274,10 @@ struct PipelineSession::Impl {
                     " encode=", count ? static_cast<double>(total_encode) / static_cast<double>(count) / 1000.0 : 0.0,
                     "ms send=", sent ? static_cast<double>(send_us) / static_cast<double>(sent) / 1000.0 : 0.0,
                     "ms queue=", packets.Size(), " drop=", raw_dropped.load() + encoded_dropped.load() + capture_drops,
-                    " raw_drop=", raw_dropped.load(), " encoded_drop=", encoded_dropped.load(), " wgc_drop=", capture_drops);
+                    " raw_drop=", raw_dropped.load(), " encoded_drop=", encoded_dropped.load(), " wgc_drop=", capture_drops,
+                    " wgc_throttled=", codec == Codec::H264 ? static_cast<WgcCapture*>(gpu_capture.get())->Throttled() : 0,
+                    " wgc_received=", codec == Codec::H264 ? static_cast<WgcCapture*>(gpu_capture.get())->Received() : 0,
+                    " wgc_copied=", codec == Codec::H264 ? static_cast<WgcCapture*>(gpu_capture.get())->Copied() : 0);
                 if (options.show_stats) LOG_INFO("capture_to_send=", static_cast<double>(now - packet.frame.capture_ts_us) / 1000.0, "ms (host clock only)");
                 sent = 0; send_us = 0; last_stats = now;
             }
@@ -270,8 +287,8 @@ struct PipelineSession::Impl {
     UniqueSocket socket;
     SessionOptions options;
     MonitorInfo monitor;
-    BoundedQueue<RawFrame> raw{2};
-    BoundedQueue<Packet> packets{2};
+    BoundedQueue<RawFrame> raw;
+    BoundedQueue<Packet> packets;
     std::atomic<bool> running{false}, force_keyframe{false};
     std::atomic<uint64_t> raw_dropped{0}, encoded_dropped{0}, encoded{0}, encode_us{0};
     std::stop_source stop;

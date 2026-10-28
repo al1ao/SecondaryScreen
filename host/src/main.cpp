@@ -32,6 +32,10 @@ bool ParseOptions(int argc, char** argv, SessionOptions& options) {
         }
         if (i + 1 >= argc) return false;
         const std::string_view text(argv[++i]);
+        if (key == "--wgc-throttle") {
+            if (text != "on" && text != "off") return false;
+            options.wgc_throttle = text == "on"; continue;
+        }
         if (key == "--display") {
             const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
             if (size <= 0) return false;
@@ -49,6 +53,7 @@ bool ParseOptions(int argc, char** argv, SessionOptions& options) {
         else if (key == "--fps" && value >= 1 && value <= 60) options.fps = value;
         else if (key == "--quality" && value >= 1 && value <= 100) options.quality = static_cast<int>(value);
         else if (key == "--bitrate" && value >= 100 && value <= 100000) options.bitrate_kbps = value;
+        else if (key == "--queue-depth" && (value == 1 || value == 2)) options.queue_depth = value;
         else return false;
     }
     return !(options.capture_primary && (!options.display_match.empty() || options.auto_resize)) &&
@@ -58,7 +63,7 @@ bool ParseOptions(int argc, char** argv, SessionOptions& options) {
 int HostMain(int argc, char** argv) {
     SessionOptions options;
     if (!ParseOptions(argc, argv, options)) {
-        LOG_ERROR("Usage: padscreen-host [--display friendly-name | --capture-primary] [--list-displays] [--auto-resize] [--force-extend] [--port 51900] [--width 1280] [--height 800] [--fps 60] [--bitrate 10000] [--quality 70] [--show-cursor true|false] [--disable-hardware] [--verbose] [--show-stats]");
+        LOG_ERROR("Usage: padscreen-host [--display friendly-name | --capture-primary] [--list-displays] [--auto-resize] [--force-extend] [--wgc-throttle on|off] [--queue-depth 1|2] [--port 51900] [--width 1280] [--height 800] [--fps 60] [--bitrate 10000] [--quality 70] [--show-cursor true|false] [--disable-hardware] [--verbose] [--show-stats]");
         return 2;
     }
     if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
