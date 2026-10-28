@@ -48,6 +48,17 @@ struct WgcCapture::Impl {
 WgcCapture::WgcCapture(bool show_cursor) : impl_(std::make_unique<Impl>(show_cursor)) {}
 WgcCapture::~WgcCapture() = default;
 bool WgcCapture::Initialize(ID3D11Device* device, uint32_t width, uint32_t height) {
+    const auto monitor = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    if (!monitor) { LOG_HR(LastErrorHr(), "MonitorFromPoint primary"); return false; }
+    return InitializeForMonitor(device, monitor, width, height);
+}
+bool WgcCapture::InitializeForMonitor(HMONITOR monitor, uint32_t width, uint32_t height) {
+    ComPtr<ID3D11Device> device;
+    if (!CreateCaptureDevice(device)) return false;
+    return InitializeForMonitor(device.Get(), monitor, width, height);
+}
+bool WgcCapture::InitializeForMonitor(ID3D11Device* device, HMONITOR monitor, uint32_t width, uint32_t height) {
+    if (!monitor) return false;
     if (!device || width == 0 || height == 0 || impl_->pool) return false;
     try {
         if (!capture::GraphicsCaptureSession::IsSupported()) { LOG_WARN("WGC unavailable on this Windows session"); return false; }
@@ -62,8 +73,6 @@ bool WgcCapture::Initialize(ID3D11Device* device, uint32_t width, uint32_t heigh
         auto device_rt = winrt::com_ptr<IInspectable>{};
         device_rt.copy_from(inspectable.Get());
         const auto interop = winrt::get_activation_factory<capture::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-        const auto monitor = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
-        if (!monitor) { LOG_HR(LastErrorHr(), "MonitorFromPoint primary"); return false; }
         winrt::check_hresult(interop->CreateForMonitor(monitor, winrt::guid_of<capture::GraphicsCaptureItem>(), winrt::put_abi(p.item)));
         const auto size = p.item.Size();
         if (size.Width <= 0 || size.Height <= 0) return false;
@@ -81,7 +90,7 @@ bool WgcCapture::Initialize(ID3D11Device* device, uint32_t width, uint32_t heigh
                 if (!frame) return;
                 const auto content = frame.ContentSize();
                 if (content.Width != size.Width || content.Height != size.Height) {
-                    if (!state->failed.exchange(true)) LOG_WARN("Primary display resized; reconnect to recreate WGC");
+                    if (!state->failed.exchange(true)) LOG_WARN("Selected display resized; reconnect to recreate WGC");
                     return;
                 }
                 auto access = frame.Surface().template as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
@@ -120,7 +129,7 @@ bool WgcCapture::Initialize(ID3D11Device* device, uint32_t width, uint32_t heigh
             p.session.IsCursorCaptureEnabled(p.show_cursor);
         else if (!p.show_cursor) LOG_WARN("This Windows build cannot disable the WGC cursor");
         p.session.StartCapture();
-        LOG_INFO("WGC started: primary ", p.width, 'x', p.height, ", frame pool=2, cursor=", p.show_cursor);
+        LOG_INFO("WGC started: selected HMONITOR=", monitor, ' ', p.width, 'x', p.height, ", frame pool=2, cursor=", p.show_cursor);
         return true;
     } catch (const winrt::hresult_error& error) {
         LOG_HR(error.code(), "WGC Initialize");

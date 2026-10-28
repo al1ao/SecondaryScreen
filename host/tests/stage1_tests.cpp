@@ -149,7 +149,7 @@ void CaptureTest() {
 class ChildHost {
 public:
     ChildHost(const std::filesystem::path& executable, uint16_t port) {
-        std::wstring command = L"\"" + executable.wstring() + L"\" --port " + std::to_wstring(port) + L" --fps 15";
+        std::wstring command = L"\"" + executable.wstring() + L"\" --capture-primary --port " + std::to_wstring(port) + L" --fps 15";
         STARTUPINFOW startup{}; startup.cb = sizeof(startup);
         Require(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
             nullptr, &startup, &process_) != FALSE, "start isolated test host");

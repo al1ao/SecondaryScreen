@@ -7,6 +7,8 @@
 #include <future>
 #include <thread>
 #include "capture/wgc_capture.h"
+#include "capture/gdi_monitor_capture.h"
+#include "display/monitor_enum.h"
 #include "encode/encoder_factory.h"
 #include "encode/mf_h264_encoder.h"
 #include "util/bounded_queue.h"
@@ -92,15 +94,32 @@ struct PipelineSession::Impl {
         }
     }
     void InitializePipeline(const Hello& hello, HelloAck& ack) {
+        const auto monitors = EnumerateMonitors();
+        const auto selected = SelectTargetMonitor(monitors, options.display_match, options.capture_primary, options.monitor_id);
+        if (!selected) { LogMissingVirtualMonitor(); ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
+        monitor = *selected;
+        if (options.auto_resize && SetDisplayResolution(monitor, hello.preferred_width, hello.preferred_height, options.fps ? options.fps : 60)) {
+            const auto updated = EnumerateMonitors();
+            const auto resized = SelectTargetMonitor(updated, options.display_match, false, monitor.monitor_device_id);
+            if (!resized) { LogMissingVirtualMonitor(); ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
+            monitor = *resized;
+        }
+        LOG_INFO("Session selected display: ", Utf8(monitor.device_name), " (", Utf8(monitor.friendly_name), ") ", monitor.width, 'x', monitor.height);
         width = options.width; height = options.height;
-        // TODO(design): retain CLI output bounds, honoring decoder_max_* and the
-        // primary screen as upper limits. GPU shaders handle aspect-preserving fit.
-        uint32_t max_width = static_cast<uint32_t>(GetSystemMetrics(SM_CXSCREEN));
-        uint32_t max_height = static_cast<uint32_t>(GetSystemMetrics(SM_CYSCREEN));
-        if (hello.decoder_max_width > 0) max_width = (std::min)(max_width, hello.decoder_max_width);
-        if (hello.decoder_max_height > 0) max_height = (std::min)(max_height, hello.decoder_max_height);
-        const double scale = (std::min)({1.0, static_cast<double>(max_width) / width, static_cast<double>(max_height) / height});
-        width = static_cast<uint32_t>(width * scale) & ~1u; height = static_cast<uint32_t>(height * scale) & ~1u;
+        if (!options.capture_primary) {
+            const auto size = NegotiateResolution(monitor.width, monitor.height, hello.preferred_width, hello.preferred_height,
+                hello.decoder_max_width, hello.decoder_max_height,
+                options.width_explicit ? options.width : 0, options.height_explicit ? options.height : 0);
+            width = size.width; height = size.height;
+        } else {
+            // Retain the stage-2 primary-screen sizing path for regression/debugging.
+            uint32_t max_width = static_cast<uint32_t>(GetSystemMetrics(SM_CXSCREEN));
+            uint32_t max_height = static_cast<uint32_t>(GetSystemMetrics(SM_CYSCREEN));
+            if (hello.decoder_max_width > 0) max_width = (std::min)(max_width, hello.decoder_max_width);
+            if (hello.decoder_max_height > 0) max_height = (std::min)(max_height, hello.decoder_max_height);
+            const double scale = (std::min)({1.0, static_cast<double>(max_width) / width, static_cast<double>(max_height) / height});
+            width = static_cast<uint32_t>(width * scale) & ~1u; height = static_cast<uint32_t>(height * scale) & ~1u;
+        }
         if (width < 2 || height < 2) { ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
         if ((hello.capabilities & kCapCodecH264) != 0 && !options.disable_hardware) {
             fps = options.fps ? options.fps : 60;
@@ -111,8 +130,10 @@ struct PipelineSession::Impl {
                 if (!CreateCaptureDeviceForAdapter(index, device)) continue;
                 gpu_encoder = CreateBestEncoder(device.Get(), width, height, fps, options.bitrate_kbps);
                 if (!gpu_encoder) continue;
-                gpu_capture = CreateWgcCapture(options.show_cursor);
-                if (gpu_capture->Initialize(device.Get(), width, height)) {
+                auto capture = std::make_unique<WgcCapture>(options.show_cursor);
+                const bool initialized = capture->InitializeForMonitor(device.Get(), monitor.hmonitor, width, height);
+                gpu_capture = std::move(capture);
+                if (initialized) {
                     GpuFrame first;
                     const auto deadline = (std::min)(handshake_deadline,
                         std::chrono::steady_clock::now() + std::chrono::milliseconds(1500));
@@ -132,7 +153,7 @@ struct PipelineSession::Impl {
             gpu_encoder.reset(); gpu_capture.reset(); device.Reset();
             if ((hello.capabilities & kCapCodecJpeg) == 0) { ack.result = static_cast<uint16_t>(HelloResult::Codec); return; }
             codec = Codec::JPEG; fps = options.fps ? options.fps : 15;
-            LOG_WARN("Selected stage-1 fallback: GDI + WIC JPEG @", fps, "fps");
+            LOG_WARN("Selected stage-1 fallback: GDI + WIC JPEG @", fps, "fps; monitor=", Utf8(monitor.device_name));
             std::promise<std::pair<uint32_t, uint32_t>> ready;
             auto initialized = ready.get_future();
             capture_worker = std::jthread([this, signal = std::move(ready)]() mutable { CaptureCpu(std::move(signal)); });
@@ -154,7 +175,7 @@ struct PipelineSession::Impl {
     void CaptureCpu(std::promise<std::pair<uint32_t, uint32_t>> ready) {
         bool signaled = false;
         try {
-            auto capture = CreateGdiCapture();
+            auto capture = options.capture_primary ? CreateGdiCapture() : CreateGdiMonitorCapture(monitor, options.show_cursor);
             if (!capture->Initialize(width, height)) { ready.set_value({0, 0}); return; }
             ready.set_value({capture->Width(), capture->Height()}); signaled = true;
             const auto interval = std::chrono::microseconds(1000000u / fps);
@@ -162,6 +183,7 @@ struct PipelineSession::Impl {
             while (running.load()) {
                 RawFrame frame;
                 if (capture->Capture(frame.cpu)) raw_dropped.fetch_add(raw.Push(std::move(frame)));
+                else if (!options.capture_primary) { LOG_WARN("Selected GDI display unavailable; closing session for renegotiation"); Stop(); break; }
                 else LOG_WARN("GDI capture failed; skipping frame");
                 deadline = (std::max)(deadline + interval, std::chrono::steady_clock::now());
                 WaitUntil(deadline);
@@ -247,6 +269,7 @@ struct PipelineSession::Impl {
     }
     UniqueSocket socket;
     SessionOptions options;
+    MonitorInfo monitor;
     BoundedQueue<RawFrame> raw{2};
     BoundedQueue<Packet> packets{2};
     std::atomic<bool> running{false}, force_keyframe{false};

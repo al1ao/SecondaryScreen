@@ -1,8 +1,8 @@
 # PadScreen
 
-当前代码包含阶段 2：WGC + GPU NV12 + MF H.264，以及保留的 GDI/JPEG 回退路径。
-请优先阅读 [阶段 2 构建运行说明](README-stage2.md) 和 [阶段 2 自检记录](ACCEPTANCE-stage2.md)。
-当前测试环境的 NVIDIA 编码属性与 AMD 主屏采集存在兼容性限制，正式 host 会安全回退 JPEG；未宣布阶段 2 全部验收通过。
+当前代码包含阶段 3 的虚拟显示器选择、VDD 安装/卸载脚本和分辨率协商，并保留阶段 1/2 的 GDI/JPEG、WGC/MF H264。
+请优先阅读 [阶段 3 构建运行说明](README-stage3.md) 和 [阶段 3 自检记录](ACCEPTANCE-stage3.md)。默认采集虚拟扩展屏；旧主屏调试命令现在需要加 `--capture-primary`。
+阶段 2 的 PC H264 链路与 30 分钟测试已验证；阶段 3 尚无指定 VDD 安装与虚拟屏完整链路证据，Android 仍无真机。历史阶段 1/2 说明见下文及 [阶段 2 记录](ACCEPTANCE-stage2.md)。
 
 ## 阶段 1 历史说明
 
