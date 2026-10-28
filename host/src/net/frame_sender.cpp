@@ -30,10 +30,13 @@ bool SendHelloAck(SOCKET socket, const HelloAck& ack) {
         TcpServer::SendAll(socket, payload.data(), payload.size());
 }
 bool SendFrame(SOCKET socket, const EncodedFrame& frame, uint32_t frame_id) {
+    return SendFrame(socket, frame, frame_id, Codec::JPEG);
+}
+bool SendFrame(SOCKET socket, const EncodedFrame& frame, uint32_t frame_id, Codec codec) {
     if (frame.data.empty() || frame.data.size() > kMaxPayload - sizeof(FrameInfo)) return false;
     const auto payload_size = static_cast<uint32_t>(frame.data.size());
     const auto length = static_cast<uint32_t>(sizeof(FrameInfo)) + payload_size;
-    const FrameInfo info{frame_id, static_cast<uint8_t>(Codec::JPEG), 0, 0,
+    const FrameInfo info{frame_id, static_cast<uint8_t>(codec), 0, 0,
         frame.width, frame.height, frame.capture_ts_us, payload_size};
     auto header = Serialize(MakeHeader(MessageType::VideoFrame, length, frame.keyframe ? kFlagKeyframe : 0));
     auto metadata = Serialize(info);

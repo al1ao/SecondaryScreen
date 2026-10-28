@@ -1,4 +1,10 @@
-# PadScreen — 阶段 1
+# PadScreen
+
+当前代码包含阶段 2：WGC + GPU NV12 + MF H.264，以及保留的 GDI/JPEG 回退路径。
+请优先阅读 [阶段 2 构建运行说明](README-stage2.md) 和 [阶段 2 自检记录](ACCEPTANCE-stage2.md)。
+当前测试环境的 NVIDIA 编码属性与 AMD 主屏采集存在兼容性限制，正式 host 会安全回退 JPEG；未宣布阶段 2 全部验收通过。
+
+## 阶段 1 历史说明
 
 Windows 主屏 → GDI → WIC JPEG → 本机 TCP / USB adb reverse → Android BitmapFactory / SurfaceView。
 本阶段用于验证链路；尚不能作为扩展桌面。只支持一台 Android 设备。

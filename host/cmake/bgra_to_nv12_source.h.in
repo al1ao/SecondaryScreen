@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr char kNv12Shader[] = R"HLSL(@NV12_SHADER_SOURCE@)HLSL";

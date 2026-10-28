@@ -28,7 +28,10 @@ fun main() {
         01 00 00 00 00 05 00 00 20 03 00 00 3C 00 00 00
         40 01 00 00 00 05 00 00 20 03 00 00 01 00 00 00
     """)
-    check(makeHello(1280, 800, 60, 320).contentEquals(vector))
+    check(makeHello(1280, 800, 60, 320, Capability.CODEC_JPEG).contentEquals(vector))
+    val stage2Hello = makeHello(1280, 800, 60, 320)
+    check(ByteBuffer.wrap(stage2Hello).order(ByteOrder.LITTLE_ENDIAN).getInt(40) == 3)
+    check(stage2Hello.copyOfRange(0, 40).contentEquals(vector.copyOfRange(0, 40)))
     val reader = MessageReader(Fragmented(vector + vector))
     repeat(2) {
         val header = checkNotNull(reader.readHeader())
@@ -46,6 +49,18 @@ fun main() {
         putInt(1280); putInt(800); putInt(0); putInt(66666); putLong(1234567890123L)
     }.array()
     val ack = parseHelloAck(ackBytes, 32)
+    val h264Ack = parseHelloAck(ackBytes.copyOf().also { it[4] = 2 }, 32)
+    check(h264Ack.codec == Codec.H264 && h264Ack.width == ack.width && h264Ack.height == ack.height)
+    val keyframe = hex("00 00 00 01 67 42 00 1E 80 00 00 01 68 CE 38 80 00 00 00 01 65 88 84")
+    val nals = H264AccessUnit.validate(keyframe, true)
+    check(nals.map { it.type } == listOf(7, 8, 5))
+    val config = H264AccessUnit.join(keyframe, nals.filter { it.type == 7 || it.type == 8 })
+    val picture = H264AccessUnit.join(keyframe, nals.filter { it.type == 5 })
+    check(H264AccessUnit.parse(config).map { it.type } == listOf(7, 8))
+    check(H264AccessUnit.parse(picture).single().type == 5)
+    rejects<ProtocolException> { H264AccessUnit.validate(picture, true) }
+    rejects<ProtocolException> { H264AccessUnit.validate(keyframe, false) }
+    rejects<ProtocolException> { H264AccessUnit.parse(hex("00 00 00 01")) }
     check(ack.width == 1280 && ack.height == 800 && ack.codec == Codec.JPEG && ack.serverTimeUs == 1234567890123L)
     val frame = ByteBuffer.allocate(32).order(ByteOrder.LITTLE_ENDIAN).apply {
         putInt(1); put(1); put(0); putShort(0); putInt(1280); putInt(800)
@@ -73,5 +88,5 @@ fun main() {
     check(unknownHeader.type == 0x1234 && unknownHeader.length == 0)
     unknown.readPayload(0)
     check(unknown.readHeader()?.type == MessageType.HELLO)
-    println("PASS: exact HELLO vector, ACK/FrameInfo, fragmented/coalesced TCP, reusable buffer, EOF, invalid lengths/magic, unknown types")
+    println("PASS: exact HELLO vector, ACK/FrameInfo, fragmented/coalesced TCP, reusable buffer, EOF, invalid lengths/magic, unknown types; stage2 caps=3, H264 ACK, Annex-B keyframe and codec-config splitting")
 }

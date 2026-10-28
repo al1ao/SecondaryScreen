@@ -5,4 +5,5 @@
 namespace pds {
 bool SendHelloAck(SOCKET socket, const HelloAck& ack);
 bool SendFrame(SOCKET socket, const EncodedFrame& frame, uint32_t frame_id);
+bool SendFrame(SOCKET socket, const EncodedFrame& frame, uint32_t frame_id, Codec codec);
 }

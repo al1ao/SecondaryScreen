@@ -17,7 +17,10 @@ import android.widget.TextView
 class MainActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var surface: SurfaceView
     private lateinit var label: TextView
+    private lateinit var statsLabel: TextView
+    private lateinit var container: FrameLayout
     private var renderer: JpegRenderer? = null
+    private var h264Renderer: H264Renderer? = null
     private var client: NetClient? = null
     private var resumed = false
     private var surfaceReady = false
@@ -31,10 +34,20 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             text = "连接中…"; textSize = 16f; setTextColor(Color.WHITE)
             setBackgroundColor(0x99000000.toInt()); setPadding(16, 8, 16, 8)
         }
-        setContentView(FrameLayout(this).apply {
+        statsLabel = TextView(this).apply {
+            textSize = 14f; setTextColor(Color.WHITE)
+            setBackgroundColor(0x99000000.toInt()); setPadding(12, 8, 12, 8)
+            // TODO(design): no new wire flags. Android's adb launch extra controls
+            // the local overlay; host --show-stats controls local host diagnostics.
+            visibility = if (intent.getBooleanExtra("show-stats", false)) View.VISIBLE else View.GONE
+        }
+        container = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
             addView(surface, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
             addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START))
-        })
+            addView(statsLabel, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END))
+        }
+        setContentView(container)
         fullscreen()
     }
     override fun onStart() { super.onStart(); resumed = true; startIfReady() }
@@ -51,16 +64,33 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         }
         val newRenderer = JpegRenderer(surface, callback)
         renderer = newRenderer
+        val hardwareRenderer = H264Renderer(surface, { text ->
+            runOnUiThread { if (generation == currentGeneration && resumed) statsLabel.text = text }
+        }, { reason -> runOnUiThread { if (generation == currentGeneration) client?.decoderFailed(reason) } })
+        h264Renderer = hardwareRenderer
         val metrics = resources.displayMetrics
         // TODO(design): stage 1 has no settings UI; an adb integer extra optionally overrides the TCP port.
         val port = intent.getIntExtra("port", Protocol.DEFAULT_PORT).takeIf { it in 1..65535 } ?: Protocol.DEFAULT_PORT
         client = NetClient(maxOf(metrics.widthPixels, metrics.heightPixels), minOf(metrics.widthPixels, metrics.heightPixels),
-            metrics.densityDpi, port, newRenderer, callback).also { it.start() }
+            metrics.densityDpi, port, newRenderer, hardwareRenderer, { ack ->
+                runOnUiThread {
+                    if (generation == currentGeneration && resumed) fitSurface(ack.width, ack.height, currentGeneration)
+                }
+            }, callback).also { it.start() }
     }
     private fun stopClient() {
         generation++
+        h264Renderer?.close(); h264Renderer = null
         client?.stop(); client = null
         renderer?.close(); renderer = null
+    }
+    private fun fitSurface(width: Int, height: Int, sessionGeneration: Int) {
+        container.post {
+            if (!resumed || !surfaceReady || generation != sessionGeneration) return@post
+            val scale = minOf(container.width.toFloat() / width, container.height.toFloat() / height)
+            surface.layoutParams = FrameLayout.LayoutParams(maxOf(1, (width * scale).toInt()),
+                maxOf(1, (height * scale).toInt()), Gravity.CENTER)
+        }
     }
     @Suppress("DEPRECATION")
     private fun fullscreen() {

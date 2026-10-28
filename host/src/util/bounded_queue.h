@@ -35,6 +35,7 @@ public:
         q_.clear();
         cv_.notify_all();
     }
+    size_t Size() { std::lock_guard lock(m_); return q_.size(); }
 private:
     const size_t cap_;
     std::deque<T> q_;

@@ -53,17 +53,21 @@ private fun ByteBuffer.u32(): Long = int.toLong() and 0xFFFFFFFFL
 private fun little(bytes: ByteArray, length: Int): ByteBuffer =
     ByteBuffer.wrap(bytes, 0, length).order(ByteOrder.LITTLE_ENDIAN)
 
-fun makeHello(width: Int, height: Int, fps: Int, dpi: Int): ByteArray =
+fun makeHello(width: Int, height: Int, fps: Int, dpi: Int,
+              capabilities: Int = Capability.CODEC_JPEG or Capability.CODEC_H264,
+              decoderMaxWidth: Int = width, decoderMaxHeight: Int = height): ByteArray =
     ByteBuffer.allocate(Protocol.HEADER_SIZE + Protocol.HELLO_SIZE).order(ByteOrder.LITTLE_ENDIAN).apply {
         putInt(Protocol.MAGIC); putShort(MessageType.HELLO.toShort()); putShort(0)
         putInt(Protocol.HELLO_SIZE)
         putShort(Protocol.VERSION.toShort()); putShort(0)
         putInt(width); putInt(height); putInt(fps); putInt(dpi)
-        putInt(width); putInt(height); putInt(Capability.CODEC_JPEG)
+        putInt(decoderMaxWidth); putInt(decoderMaxHeight); putInt(capabilities)
     }.array()
 
-fun sendHello(out: OutputStream, width: Int, height: Int, fps: Int, dpi: Int) {
-    out.write(makeHello(width, height, fps, dpi))
+fun sendHello(out: OutputStream, width: Int, height: Int, fps: Int, dpi: Int,
+              capabilities: Int = Capability.CODEC_JPEG or Capability.CODEC_H264,
+              decoderMaxWidth: Int = width, decoderMaxHeight: Int = height) {
+    out.write(makeHello(width, height, fps, dpi, capabilities, decoderMaxWidth, decoderMaxHeight))
     out.flush()
 }
 fun parseHelloAck(bytes: ByteArray, length: Int): HelloAck {
@@ -80,8 +84,8 @@ fun parseHelloAck(bytes: ByteArray, length: Int): HelloAck {
         3 -> "分辨率超出服务端能力"
         else -> "服务端拒绝连接: $result"
     })
-    if (codec != Codec.JPEG || fps == 0 || width <= 0 || height <= 0)
-        throw ProtocolException("无效的 JPEG 会话参数")
+    if ((codec != Codec.JPEG && codec != Codec.H264) || fps == 0 || width <= 0 || height <= 0)
+        throw ProtocolException("无效的会话参数")
     return ack
 }
 fun parseFrameInfo(bytes: ByteArray, length: Int, ack: HelloAck): FrameInfo {
