@@ -46,10 +46,35 @@ struct WgcCapture::Impl {
     capture::GraphicsCaptureSession session{nullptr};
     winrt::event_token arrived{}, closed{};
     bool show_cursor, subscribed = false, closed_subscribed = false;
+    HMONITOR monitor = nullptr;
+    HRESULT initialization_result = E_PENDING;
     uint32_t width = 0, height = 0;
 };
 WgcCapture::WgcCapture(bool show_cursor) : impl_(std::make_unique<Impl>(show_cursor)) {}
 WgcCapture::~WgcCapture() = default;
+HRESULT WgcCapture::PrepareForMonitor(HMONITOR monitor) {
+    auto& p = *impl_;
+    if (!monitor || p.pool) return p.initialization_result = E_INVALIDARG;
+    if (p.item && p.monitor == monitor) return p.initialization_result = S_OK;
+    try {
+        if (!capture::GraphicsCaptureSession::IsSupported()) {
+            LOG_WARN("WGC unavailable on this Windows session");
+            return p.initialization_result = E_NOTIMPL;
+        }
+        p.item = nullptr;
+        const auto interop = winrt::get_activation_factory<capture::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+        winrt::check_hresult(interop->CreateForMonitor(monitor, winrt::guid_of<capture::GraphicsCaptureItem>(), winrt::put_abi(p.item)));
+        p.monitor = monitor;
+        return p.initialization_result = S_OK;
+    } catch (const winrt::hresult_error& error) {
+        p.initialization_result = error.code();
+        LOG_HR(error.code(), "WGC capture-item preflight");
+        if (error.code() == E_ACCESSDENIED)
+            LOG_ERROR("WGC requires an interactive desktop; not retrying other adapters for this session permission error.");
+        return p.initialization_result;
+    }
+}
+HRESULT WgcCapture::InitializationResult() const { return impl_->initialization_result; }
 bool WgcCapture::ConfigureThrottle(bool enabled, uint32_t target_fps) {
     if (impl_->pool || target_fps == 0 || target_fps > 60) return false;
     impl_->state->pacer = FramePacer(enabled, target_fps);
@@ -62,28 +87,33 @@ bool WgcCapture::Initialize(ID3D11Device* device, uint32_t width, uint32_t heigh
 }
 bool WgcCapture::InitializeForMonitor(HMONITOR monitor, uint32_t width, uint32_t height) {
     ComPtr<ID3D11Device> device;
-    if (!CreateCaptureDevice(device)) return false;
+    if (FAILED(PrepareForMonitor(monitor))) return false;
+    if (!CreateCaptureDevice(device)) { impl_->initialization_result = E_FAIL; return false; }
     return InitializeForMonitor(device.Get(), monitor, width, height);
 }
 bool WgcCapture::InitializeForMonitor(ID3D11Device* device, HMONITOR monitor, uint32_t width, uint32_t height) {
-    if (!monitor) return false;
-    if (!device || width == 0 || height == 0 || impl_->pool) return false;
+    if (!device || !monitor || width == 0 || height == 0 || impl_->pool) {
+        impl_->initialization_result = E_INVALIDARG; return false;
+    }
+    if (FAILED(PrepareForMonitor(monitor))) return false;
+    impl_->initialization_result = E_FAIL;
     try {
-        if (!capture::GraphicsCaptureSession::IsSupported()) { LOG_WARN("WGC unavailable on this Windows session"); return false; }
         auto& p = *impl_;
+        const auto checked = [&](HRESULT hr, const char* context) {
+            p.initialization_result = hr;
+            return LOG_HR(hr, context);
+        };
         p.state->device = device;
         device->GetImmediateContext(p.state->context.GetAddressOf());
         ComPtr<IDXGIDevice> dxgi;
         ComPtr<IInspectable> inspectable;
-        if (!LOG_HR(device->QueryInterface(IID_PPV_ARGS(dxgi.GetAddressOf())), "WGC IDXGIDevice") ||
-            !LOG_HR(CreateDirect3D11DeviceFromDXGIDevice(dxgi.Get(), inspectable.GetAddressOf()), "WGC WinRT device")) return false;
+        if (!checked(device->QueryInterface(IID_PPV_ARGS(dxgi.GetAddressOf())), "WGC IDXGIDevice") ||
+            !checked(CreateDirect3D11DeviceFromDXGIDevice(dxgi.Get(), inspectable.GetAddressOf()), "WGC WinRT device")) return false;
         // WRL and C++/WinRT use different QueryInterface wrappers.
         auto device_rt = winrt::com_ptr<IInspectable>{};
         device_rt.copy_from(inspectable.Get());
-        const auto interop = winrt::get_activation_factory<capture::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-        winrt::check_hresult(interop->CreateForMonitor(monitor, winrt::guid_of<capture::GraphicsCaptureItem>(), winrt::put_abi(p.item)));
         const auto size = p.item.Size();
-        if (size.Width <= 0 || size.Height <= 0) return false;
+        if (size.Width <= 0 || size.Height <= 0) { p.initialization_result = E_INVALIDARG; return false; }
         p.width = static_cast<uint32_t>(size.Width); p.height = static_cast<uint32_t>(size.Height);
         // TODO(design): WGC owns native-size copies; the encoder shader scales and
         // letterboxes into the separately negotiated even output size on the GPU.
@@ -145,13 +175,16 @@ bool WgcCapture::InitializeForMonitor(ID3D11Device* device, HMONITOR monitor, ui
             p.session.IsCursorCaptureEnabled(p.show_cursor);
         else if (!p.show_cursor) LOG_WARN("This Windows build cannot disable the WGC cursor");
         p.session.StartCapture();
+        p.initialization_result = S_OK;
         LOG_INFO("WGC started: selected HMONITOR=", monitor, ' ', p.width, 'x', p.height, ", frame pool=2, cursor=", p.show_cursor);
         return true;
     } catch (const winrt::hresult_error& error) {
+        impl_->initialization_result = error.code();
         LOG_HR(error.code(), "WGC Initialize");
         if (error.code() == E_ACCESSDENIED) {
             LOG_ERROR("WGC requires access to an interactive desktop session; this session cannot access desktop capture.");
             LOG_ERROR("Run from the locally logged-in desktop session. Check session/desktop capture permissions; this is not proof of unsupported GPU hardware.");
+            LOG_ERROR("WGC session permission denied; not retrying other adapters.");
         }
         return false;
     }

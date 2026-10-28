@@ -5,6 +5,9 @@ class WgcCapture final : public IGpuCapture {
 public:
     explicit WgcCapture(bool show_cursor);
     ~WgcCapture() override;
+    // Capture-item access is independent of adapters and MF. Check it first.
+    HRESULT PrepareForMonitor(HMONITOR monitor);
+    HRESULT InitializationResult() const;
     bool Initialize(ID3D11Device* device, uint32_t width, uint32_t height) override;
     bool InitializeForMonitor(HMONITOR monitor, uint32_t width, uint32_t height);
     bool InitializeForMonitor(ID3D11Device* device, HMONITOR monitor, uint32_t width, uint32_t height);

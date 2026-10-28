@@ -4,6 +4,7 @@
 #include "util/bounded_queue.h"
 #include "util/com_ptr.h"
 #include "util/log.h"
+#include "util/timing_stats.h"
 #include <mfapi.h>
 #include <mferror.h>
 #include <array>
@@ -86,6 +87,25 @@ uint64_t Simulate(unsigned source_hz, bool enabled, unsigned target_fps, bool ji
     }
     return accepted;
 }
+void TimingTest() {
+    pds::TimingStats timings;
+    Require(timings.TakeWindow().session.count == 0, "empty timing snapshot");
+    for (uint64_t value = 1; value <= 100; ++value) timings.Record(value * 10);
+    auto sample = timings.TakeWindow();
+    Require(sample.window.count == 100 && sample.window.total_us == 50500 && sample.window.p95_upper_us == 950,
+        "nearest-rank P95 uses per-frame samples");
+    sample = timings.TakeWindow();
+    Require(sample.window.count == 0 && sample.session.count == 100 && sample.session.p95_upper_us == 950,
+        "window reset retains session distribution");
+    for (unsigned i = 0; i < 100; ++i) timings.Record(2001);
+    sample = timings.TakeWindow();
+    Require(sample.window.p95_upper_us == 2010 && sample.session.count == 200 && sample.session.p95_upper_us == 2010,
+        "quantized percentile is an upper bound and session covers multiple windows");
+    pds::TimingStats overflow;
+    overflow.Record(100000);
+    Require(overflow.TakeWindow().session.p95_upper_us == 100000, "overflow cannot clip a slow sample into a pass");
+    LOG_INFO("PASS stage 4: bounded timing histogram, per-frame P95, window reset and overflow");
+}
 }
 int main() {
     try {
@@ -112,6 +132,7 @@ int main() {
         }
         LOG_INFO("PASS stage 4: cadence/jitter/stall/toggle/queue regressions");
         EventWaitTest();
+        TimingTest();
         return 0;
     } catch (const std::exception& error) { LOG_ERROR("FAIL stage 4: ", error.what()); return 1; }
 }

@@ -63,6 +63,7 @@ int main(int argc, char** argv) {
         Check(connect(socket_handle.Get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0, "connect host");
         const auto header = pds::Serialize(pds::MakeHeader(pds::MessageType::Hello, sizeof(pds::Hello)));
         const auto hello = pds::Serialize(pds::Hello{1, 0, 1280, 800, 60, 320, 3840, 2160, jpeg_only ? 1u : 3u});
+        const auto hello_started = pds::NowUs();
         Check(pds::TcpServer::SendAll(socket_handle.Get(), header.data(), header.size()) &&
             pds::TcpServer::SendAll(socket_handle.Get(), hello.data(), hello.size()), "send HELLO");
         std::vector<uint8_t> buffer(pds::kMaxPayload);
@@ -74,7 +75,10 @@ int main(int argc, char** argv) {
         Check(read(wire) && wire.type == static_cast<uint16_t>(pds::MessageType::HelloAck), "HELLO_ACK");
         pds::HelloAck ack{};
         Check(pds::Deserialize(std::span(buffer.data(), wire.length), ack) && ack.result == 0, "ACK result");
-        LOG_INFO("PROBE ACK codec=", static_cast<unsigned>(ack.codec), " ", ack.width, 'x', ack.height, " fps=", ack.fps);
+        const auto handshake_us = pds::NowUs() - hello_started;
+        LOG_INFO("PROBE ACK codec=", static_cast<unsigned>(ack.codec), " ", ack.width, 'x', ack.height, " fps=", ack.fps,
+            " handshake_ms=", static_cast<double>(handshake_us) / 1000.0);
+        Check(handshake_us < 5000000, "HELLO_ACK response below 5 seconds");
         Check(ack.codec == (expect_jpeg || jpeg_only ? 1 : 2), "negotiated expected codec");
         std::ofstream saved;
         if (!output_file.empty()) { saved.open(output_file, std::ios::binary); Check(saved.is_open(), "open H264 output file"); }
@@ -136,6 +140,7 @@ int main(int argc, char** argv) {
         std::sort(latencies.begin(), latencies.end());
         Check(!latencies.empty(), "received frames");
         LOG_INFO("PROBE RESULT seconds=", elapsed, " frames=", frames, " keys=", keys,
+            " handshake_ms=", static_cast<double>(handshake_us) / 1000.0,
             " fps=", static_cast<double>(frames) / elapsed, " Mbps=", static_cast<double>(bytes) * 8 / elapsed / 1000000.0,
             " host_capture_to_receive_avg_ms=", static_cast<double>(latency_total) / static_cast<double>(frames) / 1000.0,
             " p50_ms=", static_cast<double>(latencies[latencies.size() / 2]) / 1000.0,

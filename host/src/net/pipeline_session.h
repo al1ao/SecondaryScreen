@@ -4,6 +4,8 @@
 #include <memory>
 #include <string>
 namespace pds {
+class WgcCapture;
+using WgcPreflight = HRESULT (*)(WgcCapture&, HMONITOR);
 struct SessionOptions {
     uint16_t port = kDefaultPort;
     uint32_t width = 1280, height = 800, fps = 0, bitrate_kbps = 10000;
@@ -18,6 +20,8 @@ struct SessionOptions {
 class PipelineSession {
 public:
     PipelineSession(UniqueSocket socket, SessionOptions options);
+    // Allows deterministic failure-path tests without changing the user's desktop.
+    PipelineSession(UniqueSocket socket, SessionOptions options, WgcPreflight preflight);
     ~PipelineSession();
     void Run();
     bool Running() const;

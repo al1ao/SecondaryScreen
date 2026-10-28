@@ -14,10 +14,12 @@
 #include "util/bounded_queue.h"
 #include "util/gpu.h"
 #include "util/timer.h"
+#include "util/timing_stats.h"
 namespace pds {
 namespace {
 struct RawFrame { CapturedFrame cpu; GpuFrame gpu; };
 struct Packet { EncodedFrame frame; uint32_t id = 0; };
+HRESULT PrepareWgc(WgcCapture& capture, HMONITOR monitor) { return capture.PrepareForMonitor(monitor); }
 bool ReadMessage(SOCKET socket, MessageHeader& header, std::vector<uint8_t>& payload) {
     std::array<uint8_t, sizeof(MessageHeader)> bytes{};
     if (!TcpServer::RecvExact(socket, bytes.data(), bytes.size())) return false;
@@ -36,7 +38,7 @@ private:
 };
 }
 struct PipelineSession::Impl {
-    Impl(UniqueSocket value, SessionOptions opts) : socket(std::move(value)), options(opts), raw(opts.queue_depth), packets(opts.queue_depth) {}
+    Impl(UniqueSocket value, SessionOptions opts, WgcPreflight check) : socket(std::move(value)), options(opts), raw(opts.queue_depth), packets(opts.queue_depth), preflight(check ? check : PrepareWgc) {}
     ~Impl() { Stop(); if (receiver.joinable()) receiver.join(); }
     void Stop() {
         if (!running.exchange(false)) return;
@@ -73,11 +75,14 @@ struct PipelineSession::Impl {
         LOG_INFO("HELLO received: ", hello.preferred_width, 'x', hello.preferred_height,
             " fps=", hello.preferred_fps, " caps=", hello.capabilities);
         HelloAck ack{};
+        const auto handshake_started = NowUs();
         ack.protocol_version = kProtocolVersion;
         if (hello.protocol_version != kProtocolVersion) ack.result = static_cast<uint16_t>(HelloResult::Version);
         else if ((hello.capabilities & (kCapCodecJpeg | kCapCodecH264)) == 0) ack.result = static_cast<uint16_t>(HelloResult::Codec);
         if (ack.result == 0) InitializePipeline(hello, ack);
         ack.server_time_us = NowUs();
+        LOG_INFO("HELLO_ACK ready: handshake_ms=", static_cast<double>(ack.server_time_us - handshake_started) / 1000.0,
+            " result=", ack.result, " codec=", static_cast<unsigned>(ack.codec));
         if (!running.load() || !SendHelloAck(socket.Get(), ack) || ack.result != 0) return;
         LOG_INFO("HELLO_ACK ", width, 'x', height, " codec=", codec == Codec::H264 ? "H264" : "JPEG", " fps=", fps);
         if (codec == Codec::H264) capture_worker = std::jthread([this] { CaptureGpu(); });
@@ -94,6 +99,16 @@ struct PipelineSession::Impl {
         }
     }
     void InitializePipeline(const Hello& hello, HelloAck& ack) {
+        // TODO(design): this bounds retries between synchronous Windows/driver
+        // calls, not the duration of an individual uninterruptible driver call.
+        // Preflight denial avoids entering any such D3D/MF call in this session.
+        const auto handshake_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+        const auto within_budget = [&](const char* step) {
+            if (!running.load()) return false;
+            if (std::chrono::steady_clock::now() < handshake_deadline) return true;
+            LOG_WARN("Hardware handshake retry budget exhausted at ", step, "; leaving time for JPEG fallback");
+            return false;
+        };
         const auto monitors = EnumerateMonitors();
         const auto selected = SelectTargetMonitor(monitors, options.display_match, options.capture_primary, options.monitor_id);
         if (!selected) { LogMissingVirtualMonitor(); ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
@@ -124,34 +139,63 @@ struct PipelineSession::Impl {
         if (width < 2 || height < 2) { ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
         if ((hello.capabilities & kCapCodecH264) != 0 && !options.disable_hardware) {
             fps = options.fps ? options.fps : 60;
-            // TODO(design): probe installed adapters in order because a hardware
-            // MFT on another GPU cannot consume this adapter's DXGI device manager.
-            const auto handshake_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
-            for (unsigned index = 0; index < 8 && running.load() && std::chrono::steady_clock::now() < handshake_deadline; ++index) {
+            // Check desktop access before any D3D/MF driver initialization. A
+            // denied capture item cannot be repaired by switching adapters.
+            auto capture = std::make_unique<WgcCapture>(options.show_cursor);
+            HRESULT prepared = E_ABORT;
+            if (within_budget("WGC preflight")) prepared = preflight(*capture, monitor.hmonitor);
+            if (prepared == E_ACCESSDENIED)
+                LOG_ERROR("WGC requires an interactive desktop; not retrying other adapters (E_ACCESSDENIED).");
+            else if (FAILED(prepared)) LOG_HR(prepared, "WGC preflight; skipping adapter probes");
+            for (unsigned index = 0; SUCCEEDED(prepared) && index < 8; ++index) {
+                if (!within_budget("adapter entry")) break;
                 if (!CreateCaptureDeviceForAdapter(index, device)) continue;
-                gpu_encoder = CreateBestEncoder(device.Get(), width, height, fps, options.bitrate_kbps);
-                if (!gpu_encoder) continue;
-                auto capture = std::make_unique<WgcCapture>(options.show_cursor);
+                if (!within_budget("D3D device creation")) break;
+                if (!capture) {
+                    capture = std::make_unique<WgcCapture>(options.show_cursor);
+                    prepared = preflight(*capture, monitor.hmonitor);
+                    if (FAILED(prepared)) {
+                        LOG_HR(prepared, "WGC capture-item preflight on retry; stopping adapter probes"); break;
+                    }
+                    if (!within_budget("WGC retry preflight")) break;
+                }
                 if (!capture->ConfigureThrottle(options.wgc_throttle, fps)) {
                     LOG_ERROR("Invalid WGC throttle configuration");
                     ack.result = static_cast<uint16_t>(HelloResult::Resolution); return;
                 }
                 const bool initialized = capture->InitializeForMonitor(device.Get(), monitor.hmonitor, width, height);
-                gpu_capture = std::move(capture);
+                const auto capture_result = capture->InitializationResult();
+                if (capture_result == E_ACCESSDENIED) {
+                    LOG_ERROR("WGC session access denied; not retrying other adapters."); break;
+                }
+                if (!within_budget("WGC initialization")) break;
                 if (initialized) {
+                    gpu_encoder = CreateBestEncoder(device.Get(), width, height, fps, options.bitrate_kbps);
+                    if (!within_budget("MF encoder creation")) { gpu_encoder.reset(); break; }
+                    if (!gpu_encoder) { capture.reset(); continue; }
                     GpuFrame first;
                     const auto deadline = (std::min)(handshake_deadline,
                         std::chrono::steady_clock::now() + std::chrono::milliseconds(1500));
-                    while (running.load() && std::chrono::steady_clock::now() < deadline && !gpu_capture->Capture(first))
+                    while (running.load() && std::chrono::steady_clock::now() < deadline && !capture->Capture(first))
                         WaitUntil(std::chrono::steady_clock::now() + std::chrono::milliseconds(5));
+                    if (!within_budget("first WGC frame")) { gpu_encoder.reset(); break; }
                     if (first.texture) {
+                        // MF initialization may span several WGC callbacks. Start
+                        // with the newest owned texture, not an old startup frame.
+                        GpuFrame newer;
+                        while (capture->Capture(newer)) first = std::move(newer);
+                        gpu_capture = std::move(capture);
                         codec = Codec::H264;
                         RawFrame initial; initial.gpu = std::move(first); raw.Push(std::move(initial));
                         break;
                     }
                     LOG_WARN("WGC produced no initial frame on this adapter; trying next adapter/JPEG");
                 }
-                gpu_capture.reset(); gpu_encoder.reset();
+                capture.reset(); gpu_encoder.reset();
+            }
+            if (!gpu_capture) {
+                gpu_encoder.reset();
+                LOG_WARN("WGC/H.264 hardware startup unavailable or retry budget exhausted; falling back to JPEG when supported");
             }
         } else if (options.disable_hardware) LOG_INFO("Hardware encoding disabled by --disable-hardware");
         if (!gpu_encoder || !gpu_capture) {
@@ -224,8 +268,7 @@ struct PipelineSession::Impl {
         uint32_t id = 0;
         bool first_input = true;
         const auto enqueue = [&](Packet& packet, uint64_t began) {
-            encode_us.fetch_add(codec == Codec::H264 ? static_cast<MfH264Encoder*>(gpu_encoder.get())->LastEncodeTimeUs() : NowUs() - began);
-            encoded.fetch_add(1);
+            encode_timings.Record(codec == Codec::H264 ? static_cast<MfH264Encoder*>(gpu_encoder.get())->LastEncodeTimeUs() : NowUs() - began);
             packet.id = ++id;
             const auto dropped = packets.Push(std::move(packet));
             encoded_dropped.fetch_add(dropped);
@@ -268,11 +311,16 @@ struct PipelineSession::Impl {
             const auto now = NowUs();
             send_us += now - began; ++sent; last_id = packet.id;
             if (now - last_stats >= 5000000) {
-                const auto count = encoded.exchange(0), total_encode = encode_us.exchange(0);
+                const auto timings = encode_timings.TakeWindow();
+                const auto count = timings.window.count, total_encode = timings.window.total_us;
                 const auto capture_drops = codec == Codec::H264 ? static_cast<WgcCapture*>(gpu_capture.get())->Dropped() : 0;
                 LOG_INFO("fps=", static_cast<double>(sent) * 1000000.0 / static_cast<double>(now - last_stats),
                     " encode=", count ? static_cast<double>(total_encode) / static_cast<double>(count) / 1000.0 : 0.0,
-                    "ms send=", sent ? static_cast<double>(send_us) / static_cast<double>(sent) / 1000.0 : 0.0,
+                    "ms encode_p95_upper=", static_cast<double>(timings.window.p95_upper_us) / 1000.0,
+                    "ms encode_session_avg=", timings.session.count ? static_cast<double>(timings.session.total_us) / static_cast<double>(timings.session.count) / 1000.0 : 0.0,
+                    "ms encode_session_p95_upper=", static_cast<double>(timings.session.p95_upper_us) / 1000.0,
+                    "ms encode_samples=", timings.session.count,
+                    " send=", sent ? static_cast<double>(send_us) / static_cast<double>(sent) / 1000.0 : 0.0,
                     "ms queue=", packets.Size(), " drop=", raw_dropped.load() + encoded_dropped.load() + capture_drops,
                     " raw_drop=", raw_dropped.load(), " encoded_drop=", encoded_dropped.load(), " wgc_drop=", capture_drops,
                     " wgc_throttled=", codec == Codec::H264 ? static_cast<WgcCapture*>(gpu_capture.get())->Throttled() : 0,
@@ -290,7 +338,8 @@ struct PipelineSession::Impl {
     BoundedQueue<RawFrame> raw;
     BoundedQueue<Packet> packets;
     std::atomic<bool> running{false}, force_keyframe{false};
-    std::atomic<uint64_t> raw_dropped{0}, encoded_dropped{0}, encoded{0}, encode_us{0};
+    std::atomic<uint64_t> raw_dropped{0}, encoded_dropped{0};
+    TimingStats encode_timings;
     std::stop_source stop;
     std::condition_variable_any wait_cv;
     std::mutex wait_mutex;
@@ -301,8 +350,12 @@ struct PipelineSession::Impl {
     std::unique_ptr<IGpuCapture> gpu_capture;
     std::unique_ptr<IGpuVideoEncoder> gpu_encoder;
     std::unique_ptr<IVideoEncoder> jpeg_encoder;
+    WgcPreflight preflight;
 };
-PipelineSession::PipelineSession(UniqueSocket socket, SessionOptions options) : impl_(std::make_unique<Impl>(std::move(socket), options)) {}
+PipelineSession::PipelineSession(UniqueSocket socket, SessionOptions options)
+    : PipelineSession(std::move(socket), std::move(options), PrepareWgc) {}
+PipelineSession::PipelineSession(UniqueSocket socket, SessionOptions options, WgcPreflight preflight)
+    : impl_(std::make_unique<Impl>(std::move(socket), std::move(options), preflight)) {}
 PipelineSession::~PipelineSession() = default;
 void PipelineSession::Run() { impl_->running.store(true); impl_->receiver = std::jthread([this] { impl_->Receive(); }); }
 bool PipelineSession::Running() const { return impl_->running.load(); }
