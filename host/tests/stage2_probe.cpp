@@ -72,9 +72,11 @@ int main(int argc, char** argv) {
         std::ofstream saved;
         if (!output_file.empty()) { saved.open(output_file, std::ios::binary); Check(saved.is_open(), "open H264 output file"); }
         ProcessMetrics metrics(pid);
+        const auto connection_memory = metrics.Memory();
         const auto began = pds::NowUs();
         auto log_time = began;
         uint64_t frames = 0, bytes = 0, keys = 0, latency_total = 0, latency_max = 0, gaps = 0;
+        uint64_t missing_frames = 0, interval_start_frames = 0, peak_memory = connection_memory;
         uint64_t initial_memory = 0, final_memory = 0;
         uint32_t previous_id = 0;
         std::vector<uint64_t> latencies;
@@ -84,7 +86,10 @@ int main(int argc, char** argv) {
             pds::FrameInfo frame{};
             Check(pds::Deserialize(std::span(buffer.data(), sizeof(frame)), frame) && pds::ValidFrame(frame, wire.length) &&
                 frame.codec == ack.codec && frame.width == ack.width && frame.height == ack.height && frame.frame_id > previous_id, "frame contract");
-            if (previous_id && frame.frame_id != previous_id + 1) ++gaps;
+            if (previous_id && frame.frame_id != previous_id + 1) {
+                ++gaps;
+                missing_frames += static_cast<uint64_t>(frame.frame_id) - previous_id - 1;
+            }
             previous_id = frame.frame_id;
             const auto data = std::span(buffer.data() + sizeof(frame), frame.payload_size);
             if (ack.codec == 2) {
@@ -103,14 +108,23 @@ int main(int argc, char** argv) {
             const auto elapsed = now - frame.capture_ts_us;
             latency_total += elapsed; latency_max = (std::max)(latency_max, elapsed); latencies.push_back(elapsed);
             ++frames; bytes += wire.length + sizeof(pds::MessageHeader);
-            if (!initial_memory && now - began >= 5000000) initial_memory = metrics.Memory();
+            if (!initial_memory && now - began >= 5000000) {
+                initial_memory = metrics.Memory();
+                peak_memory = (std::max)(peak_memory, initial_memory);
+            }
             if (now - log_time >= 60000000) {
-                LOG_INFO("PROBE progress seconds=", (now - began) / 1000000, " frames=", frames, " keys=", keys, " private_bytes=", metrics.Memory());
+                const auto memory = metrics.Memory();
+                peak_memory = (std::max)(peak_memory, memory);
+                LOG_INFO("PROBE progress seconds=", (now - began) / 1000000, " frames=", frames, " keys=", keys,
+                    " interval_fps=", static_cast<double>(frames - interval_start_frames) * 1000000.0 / static_cast<double>(now - log_time),
+                    " missing_frames=", missing_frames, " private_bytes=", memory);
+                interval_start_frames = frames;
                 log_time = now;
             }
         }
         const double elapsed = static_cast<double>(pds::NowUs() - began) / 1000000.0;
         final_memory = metrics.Memory();
+        peak_memory = (std::max)(peak_memory, final_memory);
         std::sort(latencies.begin(), latencies.end());
         Check(!latencies.empty(), "received frames");
         LOG_INFO("PROBE RESULT seconds=", elapsed, " frames=", frames, " keys=", keys,
@@ -118,9 +132,11 @@ int main(int argc, char** argv) {
             " host_capture_to_receive_avg_ms=", static_cast<double>(latency_total) / static_cast<double>(frames) / 1000.0,
             " p50_ms=", static_cast<double>(latencies[latencies.size() / 2]) / 1000.0,
             " p95_ms=", static_cast<double>(latencies[(latencies.size() - 1) * 95 / 100]) / 1000.0,
-            " max_ms=", static_cast<double>(latency_max) / 1000.0, " encoded_gaps=", gaps,
+            " max_ms=", static_cast<double>(latency_max) / 1000.0, " encoded_gaps=", gaps, " missing_frames=", missing_frames,
             " private_start=", initial_memory, " private_end=", final_memory,
-            " private_growth=", static_cast<int64_t>(final_memory) - static_cast<int64_t>(initial_memory));
+            " private_growth=", static_cast<int64_t>(final_memory) - static_cast<int64_t>(initial_memory),
+            " private_connected=", connection_memory, " private_peak_sampled=", peak_memory,
+            " private_growth_from_connect=", static_cast<int64_t>(final_memory) - static_cast<int64_t>(connection_memory));
         if (ack.codec == 2) {
             for (size_t type = 0; type < slice_counts.size(); ++type)
                 LOG_INFO("PROBE slice_type[", type, "]=", slice_counts[type]);

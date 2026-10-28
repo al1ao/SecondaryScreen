@@ -29,7 +29,7 @@ target_include_directories(padscreen-core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/g
 target_compile_definitions(padscreen-core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE _WIN32_WINNT=0x0A00)
 target_compile_options(padscreen-core PUBLIC /W4 /permissive- /utf-8 /EHsc)
 target_link_libraries(padscreen-core PUBLIC ws2_32 windowscodecs ole32 oleaut32 gdi32 user32
-    mfplat mfuuid mfreadwrite d3d11 dxgi d3dcompiler windowsapp runtimeobject)
+    mfplat mfuuid mfreadwrite d3d11 dxgi d3dcompiler windowsapp runtimeobject winmm)
 add_executable(padscreen-host src/main.cpp)
 target_link_libraries(padscreen-host PRIVATE padscreen-core)
 

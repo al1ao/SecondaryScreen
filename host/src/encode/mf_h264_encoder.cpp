@@ -6,6 +6,7 @@
 #include <mfidl.h>
 #include <mftransform.h>
 #include <dxgi.h>
+#include <timeapi.h>
 #include <chrono>
 #include <deque>
 #include <string>
@@ -18,6 +19,28 @@
 
 namespace pds {
 namespace {
+class TimerResolution {
+public:
+    TimerResolution() = default;
+    TimerResolution(const TimerResolution&) = delete;
+    TimerResolution& operator=(const TimerResolution&) = delete;
+    ~TimerResolution() { Stop(); }
+    void Start() {
+        if (active_) return;
+        const auto result = timeBeginPeriod(1);
+        active_ = result == TIMERR_NOERROR;
+        if (active_) LOG_INFO("MF encoder requested 1ms timer resolution for bounded event polling");
+        else LOG_WARN("timeBeginPeriod(1) unavailable, MMRESULT=", result);
+    }
+    void Stop() {
+        if (!active_) return;
+        const auto result = timeEndPeriod(1);
+        if (result != TIMERR_NOERROR) LOG_WARN("timeEndPeriod(1) failed, MMRESULT=", result);
+        active_ = false;
+    }
+private:
+    bool active_ = false;
+};
 class MfRuntime {
 public:
     MfRuntime() : hr_(MFStartup(MF_VERSION, MFSTARTUP_LITE)) { LOG_HR(hr_, "MFStartup"); }
@@ -87,6 +110,7 @@ struct MfH264Encoder::Impl {
         pending.clear(); submitted.clear(); input_tokens = 0; output_tokens = 0;
         parameters = {}; need_keyframe = false; last_encode_us = 0;
         healthy = false;
+        timer_resolution.Stop();
     }
     bool TryInitialize(IMFActivate* candidate, ID3D11Device* device) {
         activation = candidate;
@@ -130,6 +154,10 @@ struct MfH264Encoder::Impl {
             !LOG_HR(MFCreateMediaType(input.GetAddressOf()), "MF input type") ||
             !ConfigureVideoType(input.Get(), MFVideoFormat_NV12, width, height, fps) ||
             !LOG_HR(transform->SetInputType(0, input.Get(), 0), "MF SetInputType NV12")) return false;
+        // TODO(design): retain bounded polling in stage 2. Request 1ms resolution
+        // while the encoder is active so sleep_for(1ms) avoids coarse timer ticks.
+        // This is a process timer request, not a thread priority or fps change.
+        timer_resolution.Start();
         if (!LOG_HR(transform->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0), "MF begin streaming") ||
             !LOG_HR(transform->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0), "MF start stream")) return false;
         healthy = true;
@@ -240,6 +268,7 @@ struct MfH264Encoder::Impl {
     ComPtr<ICodecAPI> api;
     ComPtr<IMFMediaEventGenerator> events;
     ComPtr<IMFDXGIDeviceManager> manager;
+    TimerResolution timer_resolution;
     GpuNv12Converter converter;
     H264Parameters parameters;
     std::deque<EncodedFrame> pending;

@@ -237,7 +237,8 @@ struct PipelineSession::Impl {
                 LOG_INFO("fps=", static_cast<double>(sent) * 1000000.0 / static_cast<double>(now - last_stats),
                     " encode=", count ? static_cast<double>(total_encode) / static_cast<double>(count) / 1000.0 : 0.0,
                     "ms send=", sent ? static_cast<double>(send_us) / static_cast<double>(sent) / 1000.0 : 0.0,
-                    "ms queue=", packets.Size(), " drop=", raw_dropped.load() + encoded_dropped.load() + capture_drops);
+                    "ms queue=", packets.Size(), " drop=", raw_dropped.load() + encoded_dropped.load() + capture_drops,
+                    " raw_drop=", raw_dropped.load(), " encoded_drop=", encoded_dropped.load(), " wgc_drop=", capture_drops);
                 if (options.show_stats) LOG_INFO("capture_to_send=", static_cast<double>(now - packet.frame.capture_ts_us) / 1000.0, "ms (host clock only)");
                 sent = 0; send_us = 0; last_stats = now;
             }
