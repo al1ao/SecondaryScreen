@@ -122,7 +122,14 @@ bool WgcCapture::Initialize(ID3D11Device* device, uint32_t width, uint32_t heigh
         p.session.StartCapture();
         LOG_INFO("WGC started: primary ", p.width, 'x', p.height, ", frame pool=2, cursor=", p.show_cursor);
         return true;
-    } catch (const winrt::hresult_error& error) { LOG_HR(error.code(), "WGC Initialize"); return false; }
+    } catch (const winrt::hresult_error& error) {
+        LOG_HR(error.code(), "WGC Initialize");
+        if (error.code() == E_ACCESSDENIED) {
+            LOG_ERROR("WGC requires access to an interactive desktop session; this session cannot access desktop capture.");
+            LOG_ERROR("Run from the locally logged-in desktop session. Check session/desktop capture permissions; this is not proof of unsupported GPU hardware.");
+        }
+        return false;
+    }
 }
 bool WgcCapture::Capture(GpuFrame& out) {
     std::lock_guard lock(impl_->state->mutex);

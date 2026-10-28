@@ -67,8 +67,8 @@ int main(int argc, char** argv) {
         Check(read(wire) && wire.type == static_cast<uint16_t>(pds::MessageType::HelloAck), "HELLO_ACK");
         pds::HelloAck ack{};
         Check(pds::Deserialize(std::span(buffer.data(), wire.length), ack) && ack.result == 0, "ACK result");
-        Check(ack.codec == (expect_jpeg || jpeg_only ? 1 : 2), "negotiated expected codec");
         LOG_INFO("PROBE ACK codec=", static_cast<unsigned>(ack.codec), " ", ack.width, 'x', ack.height, " fps=", ack.fps);
+        Check(ack.codec == (expect_jpeg || jpeg_only ? 1 : 2), "negotiated expected codec");
         std::ofstream saved;
         if (!output_file.empty()) { saved.open(output_file, std::ios::binary); Check(saved.is_open(), "open H264 output file"); }
         ProcessMetrics metrics(pid);
@@ -78,6 +78,7 @@ int main(int argc, char** argv) {
         uint64_t initial_memory = 0, final_memory = 0;
         uint32_t previous_id = 0;
         std::vector<uint64_t> latencies;
+        std::array<uint64_t, 10> slice_counts{};
         while (pds::NowUs() - began < static_cast<uint64_t>(seconds) * 1000000) {
             Check(read(wire) && wire.type == static_cast<uint16_t>(pds::MessageType::VideoFrame), "continuous VIDEO_FRAME");
             pds::FrameInfo frame{};
@@ -87,6 +88,8 @@ int main(int argc, char** argv) {
             previous_id = frame.frame_id;
             const auto data = std::span(buffer.data() + sizeof(frame), frame.payload_size);
             if (ack.codec == 2) {
+                Check(pds::CountH264Slices(data, slice_counts), "valid H264 slice headers");
+                Check(slice_counts[1] == 0 && slice_counts[6] == 0, "actual bitstream contains B slices");
                 const bool idr = pds::HasH264Nal(data, 5);
                 Check(idr == ((wire.flags & pds::kFlagKeyframe) != 0), "KEYFRAME flag agrees with IDR");
                 if (idr) {
@@ -118,7 +121,13 @@ int main(int argc, char** argv) {
             " max_ms=", static_cast<double>(latency_max) / 1000.0, " encoded_gaps=", gaps,
             " private_start=", initial_memory, " private_end=", final_memory,
             " private_growth=", static_cast<int64_t>(final_memory) - static_cast<int64_t>(initial_memory));
-        if (ack.codec == 2) Check(keys > 0, "received independently decodable keyframe");
+        if (ack.codec == 2) {
+            for (size_t type = 0; type < slice_counts.size(); ++type)
+                LOG_INFO("PROBE slice_type[", type, "]=", slice_counts[type]);
+            LOG_INFO("PROBE slices P=", slice_counts[0] + slice_counts[5], " B=", slice_counts[1] + slice_counts[6],
+                " I=", slice_counts[2] + slice_counts[7], " SP=", slice_counts[3] + slice_counts[8], " SI=", slice_counts[4] + slice_counts[9]);
+            Check(keys > 0, "received independently decodable keyframe");
+        }
         return 0;
     } catch (const std::exception& error) { LOG_ERROR("PROBE FAIL: ", error.what()); return 1; }
 }

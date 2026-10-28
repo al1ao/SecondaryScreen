@@ -5,6 +5,7 @@
 #include <mferror.h>
 #include <mfidl.h>
 #include <mftransform.h>
+#include <dxgi.h>
 #include <chrono>
 #include <deque>
 #include <string>
@@ -108,10 +109,13 @@ struct MfH264Encoder::Impl {
             !LOG_HR(transform->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(manager.Get())), "MF D3D manager")) return false;
         // These are actual ICodecAPI properties, not IMFTransform::SetUINT32 calls.
         if (!SetCodecValue(api.Get(), CODECAPI_AVLowLatencyMode, TRUE, true, "CODECAPI_AVLowLatencyMode") ||
-            !SetCodecValue(api.Get(), CODECAPI_AVEncMPVDefaultBPictureCount, 0, false, "CODECAPI_AVEncMPVDefaultBPictureCount") ||
             !SetCodecValue(api.Get(), CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR, false, "MF CBR") ||
             !SetCodecValue(api.Get(), CODECAPI_AVEncCommonMeanBitRate, bitrate * 1000u, false, "MF mean bitrate") ||
             !SetCodecValue(api.Get(), CODECAPI_AVEncMPVGOPSize, fps, false, "MF GOP")) return false;
+        // Some hardware MFTs do not implement this property. Actual output slice_type
+        // is authoritative: ReadOutput rejects B slices even when SetValue succeeds.
+        SetCodecValue(api.Get(), CODECAPI_AVEncMPVDefaultBPictureCount, 0, false,
+            "CODECAPI_AVEncMPVDefaultBPictureCount", /*required=*/false);
         SetCodecValue(api.Get(), CODECAPI_AVEncCommonQualityVsSpeed, 0, false, "MF quality vs speed", false);
         SetCodecValue(api.Get(), CODECAPI_AVEncMPVFrameFieldMode, eAVEncMPVFrameFieldMode_FrameMode, false, "MF progressive field mode", false);
         ComPtr<IMFMediaType> output, input;
@@ -130,7 +134,7 @@ struct MfH264Encoder::Impl {
             !LOG_HR(transform->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0), "MF start stream")) return false;
         healthy = true;
         RefreshParameters();
-        LOG_INFO("Selected MF H.264 hardware: ", name, ", NV12 GPU shader, B-frames=0, low-latency=true, ",
+        LOG_INFO("Selected MF H.264 hardware: ", name, ", NV12 GPU shader, B=0 best-effort; actual B slices rejected, low-latency=true, ",
             width, 'x', height, " @", fps, "fps bitrate=", bitrate, "kbps");
         return true;
     }
@@ -202,7 +206,7 @@ struct MfH264Encoder::Impl {
             return false;
         }
         if (frame.data.size() > kMaxPayload - sizeof(FrameInfo)) { healthy = false; LOG_ERROR("H264 output exceeds protocol limit"); return false; }
-        if (HasH264BSlice(frame.data)) { healthy = false; LOG_ERROR("Hardware ignored B-frames=0; rejecting reordered stream"); return false; }
+        if (HasH264BSlice(frame.data)) { healthy = false; LOG_ERROR("Actual H264 bitstream contains B slices; rejecting hardware backend: ", name); return false; }
         pending.push_back(std::move(frame));
         return true;
     }
@@ -256,10 +260,23 @@ bool MfH264Encoder::Initialize(ID3D11Device* device, uint32_t width, uint32_t he
     if (!impl_->converter.Initialize(device, width, height)) return false;
     MFT_REGISTER_TYPE_INFO input{MFMediaType_Video, MFVideoFormat_NV12};
     MFT_REGISTER_TYPE_INFO output{MFMediaType_Video, MFVideoFormat_H264};
+    ComPtr<IDXGIDevice> dxgi_device;
+    ComPtr<IDXGIAdapter> adapter;
+    DXGI_ADAPTER_DESC adapter_desc{};
+    ComPtr<IMFAttributes> enumeration;
+    if (!LOG_HR(device->QueryInterface(IID_PPV_ARGS(dxgi_device.GetAddressOf())), "MF device IDXGIDevice") ||
+        !LOG_HR(dxgi_device->GetAdapter(adapter.GetAddressOf()), "MF device adapter") ||
+        !LOG_HR(adapter->GetDesc(&adapter_desc), "MF device adapter description") ||
+        !LOG_HR(MFCreateAttributes(enumeration.GetAddressOf(), 1), "MF enumeration attributes") ||
+        !LOG_HR(enumeration->SetBlob(MFT_ENUM_ADAPTER_LUID,
+            reinterpret_cast<const UINT8*>(&adapter_desc.AdapterLuid), sizeof(LUID)), "MF enumeration adapter LUID")) return false;
+    // MF_SA_D3D11_ADAPTER_LUID is not a Windows SDK attribute. MFTEnum2 filters
+    // hardware candidates by the device's LUID before any ActivateObject call.
     Activations candidates;
-    if (!LOG_HR(MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER,
-        &input, &output, &candidates.items, &candidates.count), "MFTEnumEx H264 hardware")) return false;
-    LOG_INFO("MF hardware H264 candidates=", candidates.count);
+    if (!LOG_HR(MFTEnum2(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER,
+        &input, &output, enumeration.Get(), &candidates.items, &candidates.count), "MFTEnum2 H264 hardware for adapter")) return false;
+    LOG_INFO("MF hardware H264 candidates=", candidates.count, " adapter LUID=", adapter_desc.AdapterLuid.HighPart,
+        ':', adapter_desc.AdapterLuid.LowPart, " vendor=", adapter_desc.VendorId);
     for (UINT32 i = 0; i < candidates.count; ++i) {
         if (impl_->TryInitialize(candidates.items[i], device)) return true;
         impl_->Reset();
@@ -274,14 +291,15 @@ bool MfH264Encoder::Encode(ID3D11Texture2D* input, uint64_t capture_ts_us, Encod
     auto& p = *impl_;
     if (!p.healthy || !input) return false;
     p.PumpEvents();
-    if (p.TakeOutput(out)) return true; // Drop this raw input, never discard encoded reference frames.
+    // A previous asynchronous output must not consume this call's raw input.
+    // Submit the new input first, then return the oldest completed output.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(20);
     while (p.healthy && p.asynchronous && p.input_tokens == 0 && std::chrono::steady_clock::now() < deadline) {
         p.PumpEvents();
-        if (p.TakeOutput(out)) return true;
         if (p.input_tokens == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    if (!p.healthy || (p.asynchronous && p.input_tokens == 0)) return false;
+    if (!p.healthy) return false;
+    if (p.asynchronous && p.input_tokens == 0) return p.TakeOutput(out);
     if (p.need_keyframe) { if (!ForceKeyframe()) { p.healthy = false; return false; } p.need_keyframe = false; }
     const auto started = NowUs();
     ComPtr<ID3D11Texture2D> nv12;
@@ -300,6 +318,7 @@ bool MfH264Encoder::Encode(ID3D11Texture2D* input, uint64_t capture_ts_us, Encod
     if (p.asynchronous) --p.input_tokens;
     p.submitted.emplace(pts, started);
     if (p.submitted.size() > 16) { LOG_ERROR("MF encoder stalled with too many in-flight samples"); p.healthy = false; return false; }
+    if (p.TakeOutput(out)) return true;
     const auto output_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10);
     do {
         p.PumpEvents();

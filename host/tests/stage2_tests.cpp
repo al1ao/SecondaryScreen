@@ -37,6 +37,25 @@ void AnnexBTest() {
     Require(!ReadH264Parameters(std::span(avcc).first(10), parameters), "truncated avcC rejected");
     Require(HasH264BSlice(std::vector<uint8_t>{0,0,0,1,0x41,0xA8}), "B slice recognized");
     Require(!HasH264BSlice(std::vector<uint8_t>{0,0,0,1,0x41,0xE0}), "P slice is not B slice");
+    for (unsigned type = 0; type < 10; ++type) {
+        // first_mb_in_slice=0, followed by ue(slice_type), then rbsp_stop_one_bit.
+        unsigned bits = 0;
+        for (unsigned value = type + 1; value > 1; value >>= 1) ++bits;
+        const unsigned length = 1 + bits * 2 + 1 + 1;
+        const unsigned packed = (1u << (bits * 2 + 2)) | ((type + 1) << 1) | 1u;
+        std::vector<uint8_t> slice{0,0,0,1,0x41};
+        for (unsigned offset = 0; offset < length; offset += 8) {
+            const unsigned remaining = length - offset;
+            slice.push_back(static_cast<uint8_t>(remaining >= 8 ? packed >> (remaining - 8) : packed << (8 - remaining)));
+        }
+        std::array<uint64_t, 10> counts{};
+        Require(CountH264Slices(slice, counts) && counts[type] == 1, "raw slice_type distribution 0..9");
+        Require(HasH264BSlice(slice) == (type % 5 == 1), "both B slice_type values detected");
+    }
+    const std::vector<uint8_t> invalid_then_b{0,0,0,1,0x41,0,0,0,1,0x41,0xA8};
+    std::array<uint64_t, 10> invalid_counts{};
+    Require(!CountH264Slices(invalid_then_b, invalid_counts) && HasH264BSlice(invalid_then_b),
+        "malformed earlier slice cannot hide a later B slice");
     std::vector<uint8_t> ambiguous_avcc(361, 0x80);
     ambiguous_avcc[0] = 0; ambiguous_avcc[1] = 0; ambiguous_avcc[2] = 1; ambiguous_avcc[3] = 0x65;
     ambiguous_avcc[4] = 0x41;
@@ -128,16 +147,14 @@ void HardwareTest(ID3D11Device* device) {
     test::MfDecoder decoder;
     std::vector<uint8_t> decoded;
     std::vector<uint64_t> encode_times;
+    std::array<uint64_t, 10> slice_counts{};
     const auto start = NowUs();
-    for (uint32_t i = 0; i < 180; ++i) {
-        if (i == 45 || i == 105) Require(encoder->ForceKeyframe(), "ForceKeyframe");
-        EncodedFrame frame;
-        if (encoder->Encode(source.Get(), start + static_cast<uint64_t>(i) * 16667, frame)) {
+    auto consume = [&](const EncodedFrame& frame, uint32_t submitted_index) {
             ++encoded_count;
             encode_times.push_back(static_cast<MfH264Encoder*>(encoder.get())->LastEncodeTimeUs());
             if (encoded_count == 1) H264WireTest(frame);
             Require(frame.width == 1280 && frame.height == 800 && frame.capture_ts_us >= start &&
-                frame.capture_ts_us <= start + static_cast<uint64_t>(i) * 16667, "output dimensions and 100ns PTS roundtrip");
+                frame.capture_ts_us <= start + static_cast<uint64_t>(submitted_index) * 16667, "output dimensions and 100ns PTS roundtrip");
             if (frame.keyframe) {
                 ++keys;
                 const auto input_index = (frame.capture_ts_us - start) / 16667;
@@ -147,12 +164,28 @@ void HardwareTest(ID3D11Device* device) {
                     HasH264Nal(frame.data, 7) && HasH264Nal(frame.data, 8) && HasH264Nal(frame.data, 5), "hardware keyframe SPS PPS IDR");
             } else Require(!HasH264Nal(frame.data, 5), "flag agrees with NAL contents");
             Require(!HasH264BSlice(frame.data), "bitstream has no B slices");
+            Require(CountH264Slices(frame.data, slice_counts), "hardware slice headers parse");
             Require(decoder.Feed(frame, &decoded), "independent MF H264 decode");
-        }
+    };
+    for (uint32_t i = 0; i < 180; ++i) {
+        if (i == 45 || i == 105) Require(encoder->ForceKeyframe(), "ForceKeyframe");
+        EncodedFrame frame;
+        if (encoder->Encode(source.Get(), start + static_cast<uint64_t>(i) * 16667, frame)) consume(frame, i);
         Require(static_cast<MfH264Encoder*>(encoder.get())->Healthy(), "encoder remains healthy");
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    Require(encoded_count > 100 && keys >= 3 && forced_first && forced_second, "continuous output and forced IDRs away from natural GOP boundaries");
+    // Hardware completion is asynchronous: collect the final submitted frame too.
+    const auto drain_deadline = NowUs() + 2000000;
+    while (encoded_count < 180 && NowUs() < drain_deadline) {
+        EncodedFrame frame;
+        if (static_cast<MfH264Encoder*>(encoder.get())->Poll(frame)) consume(frame, 179);
+        else std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        Require(static_cast<MfH264Encoder*>(encoder.get())->Healthy(), "encoder healthy during final output polling");
+    }
+    LOG_INFO("HARDWARE output frames=", encoded_count, " keys=", keys, " forced45=", forced_first,
+        " forced105=", forced_second, " P=", slice_counts[0] + slice_counts[5],
+        " B=", slice_counts[1] + slice_counts[6], " I=", slice_counts[2] + slice_counts[7]);
+    Require(encoded_count == 180 && keys >= 3 && forced_first && forced_second, "all 180 inputs output and forced IDRs away from natural GOP boundaries");
     Require(decoder.Finish(&decoded), "independent decoder final drain");
     Require(decoder.Frames() == encoded_count && decoded.size() >= static_cast<size_t>(decoder.Stride()) * 800 * 3 / 2,
         "hardware bitstream decodes continuously to NV12");
@@ -179,6 +212,8 @@ void HardwareTest(ID3D11Device* device) {
         " encode_max_ms=", static_cast<double>(encode_times.back()) / 1000.0,
         " (GPU shader + MFT completion observed by event polling; synthetic color pattern)");
     LOG_INFO("PASS: real MF hardware H264 frames=", encoded_count, " keyframes=", keys, " name=", encoder->Name());
+    LOG_INFO("HARDWARE slices P=", slice_counts[0] + slice_counts[5], " B=", slice_counts[1] + slice_counts[6],
+        " I=", slice_counts[2] + slice_counts[7]);
 }
 void WgcTest(ID3D11Device* device) {
     auto capture = CreateWgcCapture();
@@ -207,7 +242,9 @@ int main() {
         pds::ComPtr<ID3D11Device> device;
         pds::Require(pds::CreateCaptureDevice(device), "hardware D3D11");
         pds::Nv12Test(device.Get());
-        pds::HardwareTest(device.Get());
+        // Run WGC even if an encoder assertion fails; neither failure may be hidden.
+        try { pds::HardwareTest(device.Get()); }
+        catch (const std::exception& error) { LOG_ERROR("FAIL stage 2: ", error.what()); result = 1; }
         pds::WgcTest(device.Get());
     } catch (const std::exception& error) { LOG_ERROR("FAIL stage 2: ", error.what()); result = 1; }
     RoUninitialize();

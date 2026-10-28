@@ -100,9 +100,10 @@ bool HasH264Nal(std::span<const uint8_t> bytes, uint8_t type) {
     if (!SplitAnnexB(bytes, units)) return false;
     return std::any_of(units.begin(), units.end(), [type](auto unit) { return (unit[0] & 31) == type; });
 }
-bool HasH264BSlice(std::span<const uint8_t> bytes) {
+bool CountH264Slices(std::span<const uint8_t> bytes, std::array<uint64_t, 10>& counts) {
     std::vector<std::span<const uint8_t>> units;
     if (!SplitAnnexB(bytes, units)) return false;
+    bool valid = true;
     for (const auto nal : units) {
         const auto type = nal[0] & 31;
         if (type != 1 && type != 5) continue;
@@ -130,11 +131,17 @@ bool HasH264BSlice(std::span<const uint8_t> bytes) {
             }
             return ((uint32_t{1} << leading) - 1u) + suffix;
         };
-        if (ue() < 0) continue; // first_mb_in_slice
+        if (ue() < 0) { valid = false; continue; } // first_mb_in_slice
         const auto slice_type = ue();
-        if (slice_type >= 0 && slice_type % 5 == 1) return true;
+        if (slice_type < 0 || slice_type > 9) { valid = false; continue; }
+        ++counts[static_cast<size_t>(slice_type)];
     }
-    return false;
+    return valid;
+}
+bool HasH264BSlice(std::span<const uint8_t> bytes) {
+    std::array<uint64_t, 10> counts{};
+    CountH264Slices(bytes, counts);
+    return counts[1] != 0 || counts[6] != 0;
 }
 bool MakeH264AccessUnit(std::span<const uint8_t> sample, H264Parameters& parameters,
     std::vector<uint8_t>& output, bool& keyframe) {
