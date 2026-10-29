@@ -70,9 +70,11 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         }, { reason -> runOnUiThread { if (generation == currentGeneration) client?.decoderFailed(reason) } })
         h264Renderer = hardwareRenderer
         val metrics = resources.displayMetrics
+        val (realWidth, realHeight) = DisplayInfo.read(windowManager)
+        val refreshRate = DisplayInfo.refreshRate(windowManager)
         // TODO(design): stage 1 has no settings UI; an adb integer extra optionally overrides the TCP port.
         val port = intent.getIntExtra("port", Protocol.DEFAULT_PORT).takeIf { it in 1..65535 } ?: Protocol.DEFAULT_PORT
-        client = NetClient(maxOf(metrics.widthPixels, metrics.heightPixels), minOf(metrics.widthPixels, metrics.heightPixels),
+        client = NetClient(realWidth, realHeight, refreshRate,
             metrics.densityDpi, port, newRenderer, hardwareRenderer, { ack ->
                 runOnUiThread {
                     if (generation == currentGeneration && resumed) fitSurface(ack.width, ack.height, currentGeneration)

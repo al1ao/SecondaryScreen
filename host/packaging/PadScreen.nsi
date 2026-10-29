@@ -49,7 +49,7 @@ Section "主程序、Qt 和 Android Platform Tools（必需）" Main
  File /r "${PAYLOAD}\*.*"
  WriteINIStr "$INSTDIR\install-state.ini" "Install" "Root" "$INSTDIR"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PadScreen" "DisplayName" "PadScreen"
- WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PadScreen" "DisplayVersion" "0.5.0"
+ WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PadScreen" "DisplayVersion" "0.6.0"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PadScreen" "InstallLocation" "$INSTDIR"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PadScreen" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PadScreen" "NoModify" 1

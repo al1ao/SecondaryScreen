@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
     try {
         uint16_t port = pds::kDefaultPort;
         unsigned seconds = 30, pid = 0;
+        uint32_t hello_width = 1280, hello_height = 800, hello_fps = 60;
         bool jpeg_only = false, expect_jpeg = false;
         std::string output_file;
         for (int i = 1; i < argc; ++i) {
@@ -50,8 +51,12 @@ int main(int argc, char** argv) {
             else if (key == "--seconds") seconds = static_cast<unsigned>(std::stoul(value));
             else if (key == "--host-pid") pid = static_cast<unsigned>(std::stoul(value));
             else if (key == "--save") output_file = value;
+            else if (key == "--hello-width") hello_width = static_cast<uint32_t>(std::stoul(value));
+            else if (key == "--hello-height") hello_height = static_cast<uint32_t>(std::stoul(value));
+            else if (key == "--hello-fps") hello_fps = static_cast<uint32_t>(std::stoul(value));
             else throw std::runtime_error("unknown probe argument");
         }
+        Check(hello_width >= 2 && hello_width <= 16384 && hello_height >= 2 && hello_height <= 16384 && hello_fps >= 1 && hello_fps <= 165, "probe HELLO dimension/rate range");
         pds::WinsockRuntime winsock;
         Check(winsock.Ready(), "Winsock");
         pds::UniqueSocket socket_handle(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
@@ -62,7 +67,7 @@ int main(int argc, char** argv) {
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK); address.sin_port = htons(port);
         Check(connect(socket_handle.Get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0, "connect host");
         const auto header = pds::Serialize(pds::MakeHeader(pds::MessageType::Hello, sizeof(pds::Hello)));
-        const auto hello = pds::Serialize(pds::Hello{1, 0, 1280, 800, 60, 320, 3840, 2160, jpeg_only ? 1u : 3u});
+        const auto hello = pds::Serialize(pds::Hello{1, 0, hello_width, hello_height, hello_fps, 320, 4096, 4096, jpeg_only ? 1u : 3u});
         const auto hello_started = pds::NowUs();
         Check(pds::TcpServer::SendAll(socket_handle.Get(), header.data(), header.size()) &&
             pds::TcpServer::SendAll(socket_handle.Get(), hello.data(), hello.size()), "send HELLO");

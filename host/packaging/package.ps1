@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory)][string]$MakeNsis,
     [Parameter(Mandatory)][string]$CrtDirectory,
     [string]$CMake='cmake',
-    [string]$BuildDirectory=(Join-Path $PSScriptRoot '../build-stage5'),
+    [string]$BuildDirectory=(Join-Path $PSScriptRoot '../build-stage6'),
     [string]$Apk=(Join-Path $PSScriptRoot '../../android/app/build/outputs/apk/debug/app-debug.apk')
 )
 $ErrorActionPreference='Stop'

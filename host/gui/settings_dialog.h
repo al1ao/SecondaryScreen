@@ -12,7 +12,7 @@ public:
     AppConfig Value() const;
 private:
     QComboBox *monitor_, *device_;
-    QSpinBox *width_, *height_, *fps_, *bitrate_, *port_;
-    QCheckBox *resize_, *reverse_, *startup_, *foreground_;
+    QSpinBox *width_, *height_, *fps_, *max_fps_, *bitrate_, *port_;
+    QCheckBox *automatic_size_, *resize_, *reverse_, *startup_, *foreground_;
 };
 }

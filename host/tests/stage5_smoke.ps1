@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$Setup,[Parameter(Mandatory)][string]$Payload,
-    [string]$BuildDirectory=(Join-Path $PSScriptRoot '../build-stage5'))
+    [string]$BuildDirectory=(Join-Path $PSScriptRoot '../build-stage5'),[switch]$InstallationOnly)
 $ErrorActionPreference='Stop'
 $padGui=$null
 function Check([bool]$Value,[string]$Message){if(!$Value){throw $Message}}
@@ -15,6 +15,7 @@ try {
     $padInstall=Join-Path $padBuild 'install smoke'
     $padFixture=Join-Path $padBuild ('simulated-adb-integration-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
     $padEvidence=Join-Path $padBuild 'evidence'
+    New-Item -ItemType Directory -Path $padEvidence -Force | Out-Null
     $padUser=Join-Path $env:APPDATA 'PadScreen'
     $padRegistry='HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/PadScreen'
     $padDesktop=Join-Path ([Environment]::GetFolderPath('Desktop')) 'PadScreen.lnk'
@@ -52,6 +53,7 @@ try {
     foreach($padOther in $padOtherAdb){Check ([bool](Get-CimInstance Win32_Process -Filter "ProcessId=$($padOther.ProcessId)" | Where-Object {$_.CreationDate -eq $padOther.CreationDate})) 'Unrelated adb process was stopped'}
     Write-Output 'PASS uninstall stops own-path adb daemon on isolated port and preserves other-path adb processes'
     Write-Output 'PASS current-user install/uninstall in workspace path with spaces, files/config/logs/shortcuts/registry removed; no VDD selected'
+    if($InstallationOnly){Write-Output 'InstallationOnly: virtual-display GUI video integration not requested; hardware CTest is separate';exit 0}
     Copy-Item -LiteralPath $padRoot -Destination $padFixture -Recurse
     Copy-Item -LiteralPath (Join-Path $padBuild 'Release/padscreen-stage5-tests.exe') -Destination (Join-Path $padFixture 'platform-tools/adb.exe') -Force
     Set-Content -LiteralPath (Join-Path $padFixture 'SIMULATED-ADB-NOT-DISTRIBUTABLE.txt') -Value 'USB readiness fixture only. Release payload elsewhere remains unmodified.'

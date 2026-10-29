@@ -6,7 +6,7 @@ namespace pds {
 class FramePacer {
 public:
     FramePacer(bool enabled = true, uint32_t fps = 60) : enabled_(enabled), fps_(fps) {
-        if (fps == 0 || fps > 60) throw std::invalid_argument("capture fps must be 1..60");
+        if (fps == 0 || fps > 165) throw std::invalid_argument("capture fps must be 1..165");
     }
     bool Accept(uint64_t now_us) {
         if (!enabled_) return true;

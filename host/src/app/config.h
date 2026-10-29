@@ -4,9 +4,9 @@
 namespace pds {
 struct AppConfig {
     std::string monitor_id, device_serial;
-    uint32_t width = 1920, height = 1200, fps = 60, bitrate_kbps = 10000;
+    uint32_t width = 1280, height = 800, fps = 0, max_fps = 0, bitrate_kbps = 10000;
     uint16_t port = kDefaultPort;
-    bool primary = false, auto_resize = false, auto_reverse = true, auto_start = false, foreground = false;
+    bool primary = false, automatic_size = true, auto_resize = true, auto_reverse = true, auto_start = false, foreground = false;
     bool operator==(const AppConfig&) const = default;
 };
 std::filesystem::path ConfigPath();

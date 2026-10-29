@@ -23,15 +23,19 @@ AppConfig LoadConfig(const std::filesystem::path& path) {
         if (!std::filesystem::exists(path)) return value;
         if (std::filesystem::file_size(path) > 65536) throw std::runtime_error("config exceeds 64KiB");
         const auto json = nlohmann::json::parse(std::ifstream(path));
-        if (json.at("version") != 1) throw std::runtime_error("unknown config version");
+        const auto version = Number(json.at("version"),1,2);
         const auto& display = json.at("display"); const auto& connection = json.at("connection");
         value.monitor_id = display.value("monitorId", std::string{});
-        value.primary = display.value("primary", false); value.auto_resize = display.value("autoResize", false);
-        value.width = Number(display.at("width"),2,16384); value.height = Number(display.at("height"),2,16384); value.fps = Number(display.at("fps"),1,60);
+        value.primary = display.value("primary", false); value.auto_resize = display.value("autoResize", version == 2 && !value.primary);
+        // Preserve stage-5 manual choices on migration. New installations follow HELLO.
+        value.automatic_size = version == 2 ? display.value("automaticSize", true) : false;
+        value.width = Number(display.at("width"),2,16384); value.height = Number(display.at("height"),2,16384);
+        value.fps = Number(display.at("fps"),version == 1 ? 1u : 0u,165);
+        value.max_fps = display.contains("maxFps") ? Number(display.at("maxFps"),0,165) : 0;
         value.bitrate_kbps = Number(json.at("encoder").at("bitrateKbps"),100,100000);
         const auto port = Number(connection.at("port"),1,65535);
         if (port == 0 || port > 65535 || value.width < 2 || value.width > 16384 || value.width % 2 ||
-            value.height < 2 || value.height > 16384 || value.height % 2 || value.fps < 1 || value.fps > 60 ||
+            value.height < 2 || value.height > 16384 || value.height % 2 || value.fps > 165 ||
             value.bitrate_kbps < 100 || value.bitrate_kbps > 100000 || (value.primary && value.auto_resize)) throw std::runtime_error("invalid config range");
         value.port = static_cast<uint16_t>(port);
         value.device_serial = connection.value("deviceSerial", std::string{}); value.auto_reverse = connection.value("autoReverse", true);
@@ -42,7 +46,7 @@ AppConfig LoadConfig(const std::filesystem::path& path) {
 }
 bool SaveConfig(const std::filesystem::path& path, const AppConfig& config) {
     try {
-        const nlohmann::json json{{"version",1}, {"display",{{"monitorId",config.monitor_id},{"primary",config.primary},{"width",config.width},{"height",config.height},{"fps",config.fps},{"autoResize",config.auto_resize}}},
+        const nlohmann::json json{{"version",2}, {"display",{{"monitorId",config.monitor_id},{"primary",config.primary},{"width",config.width},{"height",config.height},{"fps",config.fps},{"maxFps",config.max_fps},{"automaticSize",config.automatic_size},{"autoResize",config.auto_resize}}},
             {"encoder",{{"backend","auto"},{"bitrateKbps",config.bitrate_kbps}}},
             {"connection",{{"port",config.port},{"deviceSerial",config.device_serial},{"autoReverse",config.auto_reverse},{"foreground",config.foreground}}}, {"app",{{"autoStart",config.auto_start}}}};
         std::filesystem::create_directories(path.parent_path());
@@ -76,9 +80,9 @@ bool SetAutoStart(bool enabled) {
 }
 SessionOptions SessionFromConfig(const AppConfig& config) {
     SessionOptions options;
-    options.width=config.width; options.height=config.height; options.width_explicit=true; options.height_explicit=true;
-    options.fps=config.fps; options.bitrate_kbps=config.bitrate_kbps; options.port=config.port;
-    options.capture_primary=config.primary; options.auto_resize=config.auto_resize; options.show_stats=true;
+    options.width=config.width; options.height=config.height; options.width_explicit=!config.automatic_size; options.height_explicit=!config.automatic_size;
+    options.fps=config.fps; options.max_fps=config.max_fps; options.bitrate_kbps=config.bitrate_kbps; options.port=config.port;
+    options.capture_primary=config.primary; options.auto_resize=config.auto_resize&&!config.primary; options.show_stats=true;
     if (!config.primary && !config.monitor_id.empty()) {
         const auto count=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,config.monitor_id.data(),static_cast<int>(config.monitor_id.size()),nullptr,0);
         options.monitor_id.resize(static_cast<size_t>((std::max)(count,0)));

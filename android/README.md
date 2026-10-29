@@ -22,4 +22,6 @@ APK：`<repo>\android\app\build\outputs\apk\debug\app-debug.apk`。
 ./gradlew.bat :protocol-tests:run :app:assembleDebug :app:lintDebug
 ```
 
-尚无 Android 真机。编译、协议/退避测试及 Lint 不能代替 MediaCodec、通知/服务恢复、Surface、常亮、旋转或物理 USB 拔插验收。无输入回传或 Android 设置界面。完整阶段 5 结果见 [验收记录](../host/ACCEPTANCE-stage5.md)。
+尚无 Android 真机。编译、协议/退避测试及 Lint 不能代替 MediaCodec、通知/服务恢复、Surface、常亮、旋转或物理 USB 拔插验收。无输入回传或 Android 设置界面。
+
+阶段 6 在创建连接时通过 `DisplayInfo` 读取完整屏幕区域与当前刷新率，HELLO 不再固定上报 60fps。API 30+ 使用 maximumWindowMetrics 与 Display.Mode，API 26～29 使用 getRealSize 与 Display.refreshRate，失败有回退；解码器上限来自既有硬件能力查询。具体范围见 [阶段 6 说明](../host/README-stage6.md) 和 [验收记录](../host/ACCEPTANCE-stage6.md)。

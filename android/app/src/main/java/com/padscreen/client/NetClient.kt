@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class NetClient(
     private val width: Int,
     private val height: Int,
+    private val fps: Int,
     private val dpi: Int,
     private val port: Int,
     private val renderer: JpegRenderer,
@@ -24,7 +25,9 @@ class NetClient(
     private var socket: Socket? = null
     private var worker: Thread? = null
     private val forceJpeg = AtomicBoolean(false)
-    private val support = H264Renderer.probe(minOf(width, 1280), minOf(height, 800))
+    private val support = H264Renderer.probe(width, height).let { native ->
+        if (native.name != null) native else H264Renderer.probe(minOf(width, 1280), minOf(height, 800))
+    }
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
@@ -61,7 +64,8 @@ class NetClient(
                     Log.i(TAG, "connected")
                     val hardware = !forceJpeg.get() && support.name != null
                     val capabilities = Capability.CODEC_JPEG or if (hardware) Capability.CODEC_H264 else 0
-                    sendHello(connection.getOutputStream(), width, height, 60, dpi, capabilities,
+                    Log.i(TAG, "HELLO ${width}x${height} fps=$fps caps=$capabilities decoderMax=${support.maxWidth}x${support.maxHeight}")
+                    sendHello(connection.getOutputStream(), width, height, fps, dpi, capabilities,
                         if (hardware) support.maxWidth else width, if (hardware) support.maxHeight else height)
                     payloadReaderFactory.input = connection.getInputStream()
                     val ack = readAck(reader)
@@ -69,7 +73,7 @@ class NetClient(
                     val codecName = if (ack.codec == Codec.H264) "H264" else "JPEG"
                     val connectedText = "已连接 ${ack.width}x${ack.height} $codecName"
                     status(connectedText)
-                    Log.i(TAG, "HELLO_ACK ${ack.width}x${ack.height} codec=$codecName")
+                    Log.i(TAG, "HELLO_ACK ${ack.width}x${ack.height} codec=$codecName fps=${ack.fps}")
                     session(ack)
                     if (ack.codec == Codec.H264) {
                         renderer.disconnected()

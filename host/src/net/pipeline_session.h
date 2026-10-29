@@ -9,11 +9,12 @@ using WgcPreflight = HRESULT (*)(WgcCapture&, HMONITOR);
 struct SessionOptions {
     uint16_t port = kDefaultPort;
     uint32_t width = 1280, height = 800, fps = 0, bitrate_kbps = 10000;
+    uint32_t max_fps = 0;
     uint32_t queue_depth = 2;
     bool wgc_throttle = true;
     int quality = 70;
     bool show_stats = false, show_cursor = true, disable_hardware = false;
-    bool capture_primary = false, auto_resize = false, force_extend = false, list_displays = false;
+    bool capture_primary = false, auto_resize = true, force_extend = false, list_displays = false;
     bool width_explicit = false, height_explicit = false;
     std::wstring display_match, monitor_id;
 };

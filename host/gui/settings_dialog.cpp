@@ -26,17 +26,23 @@ SettingsDialog::SettingsDialog(const AppConfig& config,const std::vector<AdbDevi
     auto spin=[&](int min,int max,int value){auto* item=new QSpinBox(this);item->setRange(min,max);item->setValue(value);return item;};
     width_=spin(2,16384,static_cast<int>(config.width));width_->setSingleStep(2);
     height_=spin(2,16384,static_cast<int>(config.height));height_->setSingleStep(2);
-    fps_=spin(1,60,static_cast<int>(config.fps));bitrate_=spin(100,100000,static_cast<int>(config.bitrate_kbps));bitrate_->setSuffix(QStringLiteral(" kbps"));
+    automatic_size_=new QCheckBox(QStringLiteral("跟随平板分辨率"),this);automatic_size_->setChecked(config.automatic_size);
+    width_->setEnabled(!config.automatic_size);height_->setEnabled(!config.automatic_size);
+    connect(automatic_size_,&QCheckBox::toggled,this,[this](bool automatic){width_->setEnabled(!automatic);height_->setEnabled(!automatic);});
+    fps_=spin(0,165,static_cast<int>(config.fps));fps_->setSpecialValueText(QStringLiteral("跟随平板"));
+    max_fps_=spin(0,165,static_cast<int>(config.max_fps));max_fps_->setSpecialValueText(QStringLiteral("不限制"));
+    bitrate_=spin(100,100000,static_cast<int>(config.bitrate_kbps));bitrate_->setSuffix(QStringLiteral(" kbps"));
     port_=spin(1,65535,config.port);
-    form->addRow(QStringLiteral("输出宽度"),width_);form->addRow(QStringLiteral("输出高度"),height_);
-    form->addRow(QStringLiteral("帧率"),fps_);form->addRow(QStringLiteral("码率"),bitrate_);form->addRow(QStringLiteral("端口"),port_);
+    form->addRow(QStringLiteral("分辨率"),automatic_size_);
+    form->addRow(QStringLiteral("手动宽度"),width_);form->addRow(QStringLiteral("手动高度"),height_);
+    form->addRow(QStringLiteral("帧率"),fps_);form->addRow(QStringLiteral("帧率上限"),max_fps_);form->addRow(QStringLiteral("码率"),bitrate_);form->addRow(QStringLiteral("端口"),port_);
     device_=new QComboBox(this);device_->addItem(QStringLiteral("自动（仅连接一台时）"),QString{});
     for(const auto& device:devices) device_->addItem(QString::fromStdString(device.model.empty()?device.serial:device.model+" · "+device.serial)+QStringLiteral(" [%1]").arg(QString::fromStdString(device.state)),QString::fromStdString(device.serial));
     index=device_->findData(QString::fromStdString(config.device_serial));
     if(index<0){device_->addItem(QString::fromStdString(config.device_serial)+QStringLiteral("（未连接）"),QString::fromStdString(config.device_serial));index=device_->count()-1;}
     device_->setCurrentIndex(index);form->addRow(QStringLiteral("USB 平板"),device_);layout->addLayout(form);
     auto check=[&](const QString& text,bool checked){auto* item=new QCheckBox(text,this);item->setChecked(checked);layout->addWidget(item);return item;};
-    resize_=check(QStringLiteral("自动调整虚拟屏分辨率（会改变 Windows 显示设置）"),config.auto_resize);
+    resize_=check(QStringLiteral("自动调整虚拟屏分辨率和刷新率（会改变显示设置）"),config.auto_resize);
     reverse_=check(QStringLiteral("自动配置 USB 连接"),config.auto_reverse);
     startup_=check(QStringLiteral("登录 Windows 时启动"),config.auto_start);
     foreground_=check(QStringLiteral("Android 前台保活（实验性，默认关闭）"),config.foreground);
@@ -51,6 +57,7 @@ AppConfig SettingsDialog::Value() const {
     AppConfig value;
     const auto monitor=monitor_->currentData().toString();value.primary=monitor==QStringLiteral("primary");value.monitor_id=value.primary?"":monitor.toStdString();
     value.width=static_cast<uint32_t>(width_->value())&~1u;value.height=static_cast<uint32_t>(height_->value())&~1u;
+    value.automatic_size=automatic_size_->isChecked();value.max_fps=static_cast<uint32_t>(max_fps_->value());
     value.fps=static_cast<uint32_t>(fps_->value());value.bitrate_kbps=static_cast<uint32_t>(bitrate_->value());value.port=static_cast<uint16_t>(port_->value());
     value.device_serial=device_->currentData().toString().toStdString();value.auto_resize=resize_->isChecked()&&!value.primary;
     value.auto_reverse=reverse_->isChecked();value.auto_start=startup_->isChecked();value.foreground=foreground_->isChecked();return value;

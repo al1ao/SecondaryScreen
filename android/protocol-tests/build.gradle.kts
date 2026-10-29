@@ -12,7 +12,7 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 sourceSets {
     main {
         kotlin.srcDir("../app/src/main/java")
-        kotlin.include("com/padscreen/client/Protocol.kt", "com/padscreen/client/H264AccessUnit.kt", "com/padscreen/client/ProtocolSelfTest.kt", "com/padscreen/client/ReconnectDelay.kt")
+        kotlin.include("com/padscreen/client/Protocol.kt", "com/padscreen/client/H264AccessUnit.kt", "com/padscreen/client/ProtocolSelfTest.kt", "com/padscreen/client/ReconnectDelay.kt", "com/padscreen/client/DisplayValues.kt", "com/padscreen/client/DisplayValuesSelfTest.kt")
     }
 }
 application { mainClass.set("com.padscreen.client.ProtocolSelfTestKt") }

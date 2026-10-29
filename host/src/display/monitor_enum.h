@@ -10,7 +10,7 @@ struct MonitorInfo {
     std::wstring device_name, friendly_name, monitor_device_id;
     HMONITOR hmonitor = nullptr;
     RECT rect{};
-    uint32_t width = 0, height = 0;
+    uint32_t width = 0, height = 0, refresh_rate = 0;
     bool is_primary = false, is_virtual = false;
 };
 bool IsVirtualDisplayName(const std::wstring& name);

@@ -9,6 +9,7 @@
 #include "capture/wgc_capture.h"
 #include "capture/gdi_monitor_capture.h"
 #include "display/monitor_enum.h"
+#include "display/adaptive_mode.h"
 #include "encode/encoder_factory.h"
 #include "encode/mf_h264_encoder.h"
 #include "util/bounded_queue.h"
@@ -113,19 +114,28 @@ struct PipelineSession::Impl {
         const auto selected = SelectTargetMonitor(monitors, options.display_match, options.capture_primary, options.monitor_id);
         if (!selected) { LogMissingVirtualMonitor(); ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
         monitor = *selected;
-        if (options.auto_resize && SetDisplayResolution(monitor, hello.preferred_width, hello.preferred_height, options.fps ? options.fps : 60)) {
-            const auto updated = EnumerateMonitors();
-            const auto resized = SelectTargetMonitor(updated, options.display_match, false, monitor.monitor_device_id);
-            if (!resized) { LogMissingVirtualMonitor(); ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
-            monitor = *resized;
-        }
+        const auto requested = ResolveVideoRequest(options, hello);
+        if (requested.width < 2 || requested.height < 2) { ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
+        bool display_lost = false;
+        const auto mode = AdaptDisplayMode({monitor.width, monitor.height, monitor.refresh_rate}, requested,
+            options.auto_resize && !options.capture_primary && monitor.is_virtual && !monitor.is_primary,
+            [&](const VideoMode& target) -> std::optional<VideoMode> {
+                if (display_lost || !SetDisplayResolution(monitor, target.width, target.height, target.fps)) return std::nullopt;
+                const auto updated = EnumerateMonitors();
+                const auto resized = SelectTargetMonitor(updated, options.display_match, false, monitor.monitor_device_id);
+                if (!resized) { display_lost = true; return std::nullopt; }
+                monitor = *resized;
+                return VideoMode{monitor.width, monitor.height, monitor.refresh_rate ? monitor.refresh_rate : target.fps};
+            });
+        if (display_lost) { LogMissingVirtualMonitor(); ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
         LOG_INFO("Session selected display: ", Utf8(monitor.device_name), " (", Utf8(monitor.friendly_name), ") ", monitor.width, 'x', monitor.height);
-        LOG_INFO("Pipeline options: wgc_throttle=", options.wgc_throttle ? "on" : "off", " queue_depth=", options.queue_depth);
-        width = options.width; height = options.height;
+        LOG_INFO("Pipeline options: wgc_throttle=", options.wgc_throttle ? "on" : "off", " queue_depth=", options.queue_depth,
+            " target_fps=", mode.fps, " max_fps=", options.max_fps, " auto_resize=", options.auto_resize ? "on" : "off");
+        width = requested.width; height = requested.height;
         if (!options.capture_primary) {
-            const auto size = NegotiateResolution(monitor.width, monitor.height, hello.preferred_width, hello.preferred_height,
+            const auto size = NegotiateResolution(mode.width, mode.height, requested.width, requested.height,
                 hello.decoder_max_width, hello.decoder_max_height,
-                options.width_explicit ? options.width : 0, options.height_explicit ? options.height : 0);
+                requested.width, requested.height);
             width = size.width; height = size.height;
         } else {
             // Retain the stage-2 primary-screen sizing path for regression/debugging.
@@ -138,7 +148,7 @@ struct PipelineSession::Impl {
         }
         if (width < 2 || height < 2) { ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
         if ((hello.capabilities & kCapCodecH264) != 0 && !options.disable_hardware) {
-            fps = options.fps ? options.fps : 60;
+            fps = mode.fps;
             // Check desktop access before any D3D/MF driver initialization. A
             // denied capture item cannot be repaired by switching adapters.
             auto capture = std::make_unique<WgcCapture>(options.show_cursor);
@@ -201,7 +211,7 @@ struct PipelineSession::Impl {
         if (!gpu_encoder || !gpu_capture) {
             gpu_encoder.reset(); gpu_capture.reset(); device.Reset();
             if ((hello.capabilities & kCapCodecJpeg) == 0) { ack.result = static_cast<uint16_t>(HelloResult::Codec); return; }
-            codec = Codec::JPEG; fps = options.fps ? options.fps : 15;
+            codec = Codec::JPEG; fps = options.fps ? mode.fps : (std::min)(mode.fps, 15u);
             LOG_WARN("Selected stage-1 fallback: GDI + WIC JPEG @", fps, "fps; monitor=", Utf8(monitor.device_name));
             std::promise<std::pair<uint32_t, uint32_t>> ready;
             auto initialized = ready.get_future();

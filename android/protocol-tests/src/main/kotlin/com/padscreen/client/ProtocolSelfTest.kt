@@ -23,6 +23,7 @@ private class Fragmented(private val bytes: ByteArray) : InputStream() {
     }
 }
 fun main() {
+    displayValuesSelfTest()
     val vector = hex("""
         50 44 53 31 01 00 00 00 20 00 00 00
         01 00 00 00 00 05 00 00 20 03 00 00 3C 00 00 00

@@ -76,7 +76,7 @@ HRESULT WgcCapture::PrepareForMonitor(HMONITOR monitor) {
 }
 HRESULT WgcCapture::InitializationResult() const { return impl_->initialization_result; }
 bool WgcCapture::ConfigureThrottle(bool enabled, uint32_t target_fps) {
-    if (impl_->pool || target_fps == 0 || target_fps > 60) return false;
+    if (impl_->pool || target_fps == 0 || target_fps > 165) return false;
     impl_->state->pacer = FramePacer(enabled, target_fps);
     return true;
 }

@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(padscreen-core STATIC
+    src/app/cli_options.cpp
+    src/display/adaptive_mode.cpp
     src/protocol/protocol.cpp
     src/capture/gdi_capture.cpp
     src/capture/wgc_capture.cpp
@@ -46,6 +48,10 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(padscreen-stage6-tests tests/stage6_tests.cpp)
+    target_link_libraries(padscreen-stage6-tests PRIVATE padscreen-app)
+    add_test(NAME stage6-adaptation COMMAND padscreen-stage6-tests)
+    set_tests_properties(stage6-adaptation PROPERTIES TIMEOUT 30)
     add_executable(padscreen-stage5-tests tests/stage5_tests.cpp)
     target_link_libraries(padscreen-stage5-tests PRIVATE padscreen-app)
     add_test(NAME stage5-shell COMMAND padscreen-stage5-tests)

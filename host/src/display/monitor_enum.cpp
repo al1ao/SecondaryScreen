@@ -41,6 +41,9 @@ BOOL CALLBACK EnumMonitor(HMONITOR handle, HDC, LPRECT, LPARAM parameter) {
         monitor.rect = native.rcMonitor; monitor.is_primary = (native.dwFlags & MONITORINFOF_PRIMARY) != 0;
         monitor.width = static_cast<uint32_t>(native.rcMonitor.right - native.rcMonitor.left);
         monitor.height = static_cast<uint32_t>(native.rcMonitor.bottom - native.rcMonitor.top);
+        DEVMODEW mode{}; mode.dmSize = sizeof(mode);
+        if (EnumDisplaySettingsW(native.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
+            monitor.refresh_rate = mode.dmDisplayFrequency;
         DISPLAY_DEVICEW device{}; device.cb = sizeof(device);
         if (EnumDisplayDevicesW(native.szDevice, 0, &device, EDD_GET_DEVICE_INTERFACE_NAME)) {
             monitor.friendly_name = device.DeviceString; monitor.monitor_device_id = device.DeviceID;
@@ -132,7 +135,7 @@ void LogMonitors(std::span<const MonitorInfo> monitors, HMONITOR selected) {
     for (size_t index = 0; index < monitors.size(); ++index) {
         const auto& monitor = monitors[index];
         LOG_INFO("  [", index, "] ", Utf8(monitor.device_name), " \"", Utf8(monitor.friendly_name), "\" ",
-            monitor.width, 'x', monitor.height, " @ (", monitor.rect.left, ',', monitor.rect.top, ')',
+            monitor.width, 'x', monitor.height, " @", monitor.refresh_rate, "Hz (", monitor.rect.left, ',', monitor.rect.top, ')',
             monitor.is_primary ? " PRIMARY" : "", monitor.hmonitor == selected ? " <-- selected" : "");
     }
 }
@@ -176,7 +179,7 @@ bool SetDisplayResolution(const MonitorInfo& monitor, uint32_t width, uint32_t h
     DEVMODEW mode{}; mode.dmSize = sizeof(mode);
     mode.dmPelsWidth = width; mode.dmPelsHeight = height; mode.dmDisplayFrequency = refresh;
     mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
-    // One call per HELLO, never per frame; do not persistently rewrite the user's registry settings.
+    // Only during HELLO, never per frame; do not persistently rewrite the registry.
     const auto result = ChangeDisplaySettingsExW(monitor.device_name.c_str(), &mode, nullptr, 0, nullptr);
     if (result != DISP_CHANGE_SUCCESSFUL) { LOG_WARN("Virtual display resize failed, DISP_CHANGE=", result, "; retaining current resolution. Add the requested mode to VDD settings first."); return false; }
     return true;
