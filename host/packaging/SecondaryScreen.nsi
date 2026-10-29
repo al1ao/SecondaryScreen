@@ -49,7 +49,7 @@ Section "主程序、Qt 和 Android Platform Tools（必需）" Main
  File /r "${PAYLOAD}\*.*"
  WriteINIStr "$INSTDIR\install-state.ini" "Install" "Root" "$INSTDIR"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SecondaryScreen" "DisplayName" "SecondaryScreen"
- WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SecondaryScreen" "DisplayVersion" "0.6.0"
+ WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SecondaryScreen" "DisplayVersion" "0.6.1"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SecondaryScreen" "InstallLocation" "$INSTDIR"
  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SecondaryScreen" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SecondaryScreen" "NoModify" 1

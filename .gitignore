@@ -3,3 +3,19 @@
 
 # Diagnostic output
 *.log
+
+# Build output and tool caches
+build*/
+.gradle/
+.gradle-user/
+.idea/
+.vscode/
+*.iml
+*.user
+.tools/
+
+# OS junk
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp

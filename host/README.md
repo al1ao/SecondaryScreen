@@ -35,6 +35,7 @@ WGC 采集 → GPU 转 NV12 → MF H.264 硬编 → TCP(adb reverse) → Android
 - Visual Studio 2022，勾选「使用 C++ 的桌面开发」和 Windows SDK
 - CMake 3.21+
 - Android Platform Tools（adb）在 PATH，或放在安装目录
+- 构建 GUI 托盘版还需要 Qt 6.8 MSVC 2022 64-bit（含 Widgets、Network）
 
 **注意**：GUI 和 WGC 需要**本地交互式桌面会话**。远程/服务会话可能返回 `E_ACCESSDENIED`。
 
@@ -42,7 +43,7 @@ WGC 采集 → GPU 转 NV12 → MF H.264 硬编 → TCP(adb reverse) → Android
 
 ## 构建
 
-在 VS Developer PowerShell 中：
+在 VS Developer PowerShell 中。命令行版不需要 Qt：
 
 ```powershell
 cd host
@@ -50,9 +51,17 @@ cmake -B build -A x64
 cmake --build build --config Release
 ```
 
-产物：
-- `build/Release/secondaryscreen-host.exe` — 命令行版
-- `build/Release/SecondaryScreen.exe` — GUI 托盘版
+产物：`build/Release/secondaryscreen-host.exe` — 命令行版。
+
+GUI 托盘版默认不构建，需要显式打开并指定 Qt 安装目录：
+
+```powershell
+cd host
+cmake -B build-gui -A x64 -DSECONDARYSCREEN_BUILD_GUI=ON "-DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64"
+cmake --build build-gui --config Release
+```
+
+产物：`build-gui/Release/SecondaryScreen.exe` — GUI 托盘版。
 
 运行测试：
 

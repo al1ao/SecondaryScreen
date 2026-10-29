@@ -1,4 +1,4 @@
-SecondaryScreen 0.5.0 - third-party notices
+SecondaryScreen 0.6.1 - third-party notices
 
 Qt 6.8.3: dynamically linked Core, Gui, Widgets and Network, with release plugins.
 Qt is used under LGPL version 3; license texts and the upstream SPDX attribution

@@ -4,6 +4,8 @@
 
 ## 快速开始（3 步）
 
+发行版安装包请从 [Releases](../../releases) 下载 `SecondaryScreen-Setup.exe`；仓库本身只包含源码，没有可用的发行版时请按 [host/README.md](host/README.md) 与 [android/README.md](android/README.md) 自行构建。
+
 1. 双击 `SecondaryScreen-Setup.exe` 安装。电脑没有虚拟显示器时，可勾选 VDD 组件并确认管理员授权；此组件需要联网下载经过固定哈希和签名校验的驱动。
 2. 把安装目录内的 `SecondaryScreen.apk` 复制到平板并安装，开启“开发者选项 → USB 调试”。安装目录默认为 `%LOCALAPPDATA%\Programs\SecondaryScreen`。
 3. 用数据线连接，平板上点“允许 USB 调试”，运行电脑的 SecondaryScreen。程序会自动打开已安装的平板 App；托盘绿色表示已连接。
