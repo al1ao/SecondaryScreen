@@ -90,11 +90,11 @@ AdbStatus AdbManager::Poll(uint16_t port,const std::string& preferred,bool auto_
     if(!launched_) {
         // TODO(design): launch the installed Activity once per USB/mapping recovery.
         // Missing APK is reported rather than installing an unrequested package.
-        const auto launch=Run({L"-s",Serial(serial_),L"shell",L"am",L"start",L"-n",L"com.padscreen.client/.MainActivity",
+        const auto launch=Run({L"-s",Serial(serial_),L"shell",L"am",L"start",L"-n",L"com.secondaryscreen.client/.MainActivity",
             L"-f",L"0x10008000",
             L"--ei",L"port",std::to_wstring(port),L"--ez",L"foreground",foreground?L"true":L"false"});
         if(launch.exit_code!=0 || launch.timed_out || launch.output.find("Error:")!=std::string::npos || launch.output.find("Exception")!=std::string::npos) {
-            status.error=true;status.message="平板 App 无法启动，请先安装 PadScreen.apk";return status;
+            status.error=true;status.message="平板 App 无法启动，请先安装 SecondaryScreen.apk";return status;
         }
         launched_=true;
     }

@@ -10,8 +10,8 @@ BEGIN
  BEGIN
   BLOCK "040904b0"
   BEGIN
-   VALUE "FileDescription", "PadScreen USB Display\0"
-   VALUE "ProductName", "PadScreen\0"
+   VALUE "FileDescription", "SecondaryScreen USB Display\0"
+   VALUE "ProductName", "SecondaryScreen\0"
    VALUE "FileVersion", "0.6.0\0"
   END
  END

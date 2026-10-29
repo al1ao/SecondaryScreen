@@ -3,10 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 android {
-    namespace = "com.padscreen.client"
+    namespace = "com.secondaryscreen.client"
     compileSdk = 34
     defaultConfig {
-        applicationId = "com.padscreen.client"
+        applicationId = "com.secondaryscreen.client"
         minSdk = 26
         targetSdk = 34
         versionCode = 7

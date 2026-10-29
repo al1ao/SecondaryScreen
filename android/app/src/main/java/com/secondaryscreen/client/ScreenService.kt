@@ -1,4 +1,4 @@
-package com.padscreen.client
+package com.secondaryscreen.client
 
 import android.Manifest
 import android.app.Activity
@@ -49,9 +49,9 @@ class ScreenService : Service() {
     }
 
     companion object {
-        private const val TAG = "PadScreen"
-        private const val CHANNEL = "padscreen-connection"
-        private const val STOP = "com.padscreen.client.STOP_FOREGROUND"
+        private const val TAG = "SecondaryScreen"
+        private const val CHANNEL = "secondaryscreen-connection"
+        private const val STOP = "com.secondaryscreen.client.STOP_FOREGROUND"
         fun startIfRequested(activity: Activity) {
             val service = Intent(activity, ScreenService::class.java)
             try {

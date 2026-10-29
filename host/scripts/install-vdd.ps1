@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$DownloadOnly,
-    [switch]$UsePadScreenConfig,
+    [switch]$UseSecondaryScreenConfig,
     [string]$CacheDirectory = (Join-Path $PSScriptRoot '../.tools/vdd-25.7.23')
 )
 $ErrorActionPreference = 'Stop'
@@ -42,12 +42,12 @@ try {
     })
     if ($existing.Count) { throw 'MttVDD is already installed. No second instance was created. Inspect Device Manager and enable/extend the existing virtual display.' }
     $destination = 'C:\VirtualDisplayDriver'
-    $manifest = Join-Path $destination 'padscreen-install.json'
-    foreach ($name in @('MttVDD.inf', 'MttVDD.dll', 'mttvdd.cat', 'padscreen-install.json')) {
+    $manifest = Join-Path $destination 'secondaryscreen-install.json'
+    foreach ($name in @('MttVDD.inf', 'MttVDD.dll', 'mttvdd.cat', 'secondaryscreen-install.json')) {
         if (Test-Path -LiteralPath (Join-Path $destination $name)) { throw "Existing file '$destination\$name'. Refusing to overwrite an installation. Inspect or uninstall it first." }
     }
     $config = Join-Path $destination 'vdd_settings.xml'
-    if ($UsePadScreenConfig -and (Test-Path -LiteralPath $config)) { throw 'A VDD settings file already exists. Refusing to overwrite it; back it up and merge desired modes manually.' }
+    if ($UseSecondaryScreenConfig -and (Test-Path -LiteralPath $config)) { throw 'A VDD settings file already exists. Refusing to overwrite it; back it up and merge desired modes manually.' }
     New-Item -ItemType Directory -Force -Path $destination | Out-Null
     $owned = @()
     foreach ($name in @('MttVDD.inf', 'MttVDD.dll', 'mttvdd.cat')) {
@@ -58,12 +58,12 @@ try {
         # TODO(design): keep the verified release's default XML and EDID. Custom
         # 1920x1200 mode configuration is optional and documented separately.
         $configSource = Join-Path $source 'vdd_settings.xml'
-        if ($UsePadScreenConfig) { $configSource = Join-Path $PSScriptRoot '../assets/vdd_settings.xml' }
+        if ($UseSecondaryScreenConfig) { $configSource = Join-Path $PSScriptRoot '../assets/vdd_settings.xml' }
         Copy-Item -LiteralPath $configSource -Destination $config
         $owned += @{ Name = 'vdd_settings.xml'; Hash = (Get-FileHash -LiteralPath $config).Hash }
     }
-    if (!('PadScreen.VddDeviceInstaller' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'VddDeviceInstaller.cs') }
-    $installed = [PadScreen.VddDeviceInstaller]::Install((Join-Path $destination 'MttVDD.inf'))
+    if (!('SecondaryScreen.VddDeviceInstaller' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'VddDeviceInstaller.cs') }
+    $installed = [SecondaryScreen.VddDeviceInstaller]::Install((Join-Path $destination 'MttVDD.inf'))
     $driver = $null
     for ($attempt = 0; $attempt -lt 10; ++$attempt) {
         $driver = Get-CimInstance Win32_PnPSignedDriver | Where-Object { $_.DeviceID -eq $installed.InstanceId } | Select-Object -First 1

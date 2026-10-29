@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param([ValidateRange(1,65535)][int]$Port=51900)
 $ErrorActionPreference='Continue'
-Write-Output 'PadScreen 环境诊断（不修改显示设置或 USB 映射）'
+Write-Output 'SecondaryScreen 环境诊断（不修改显示设置或 USB 映射）'
 Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version
 Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion,CurrentHorizontalResolution,CurrentVerticalResolution,CurrentRefreshRate
 Get-PnpDevice -Class Display | Select-Object FriendlyName,Status

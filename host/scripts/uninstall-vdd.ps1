@@ -5,8 +5,8 @@ try {
     $administrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (!$administrator) { throw 'Administrator privileges required. Open PowerShell as administrator and run host\scripts\uninstall-vdd.ps1 again.' }
     $destination = 'C:\VirtualDisplayDriver'
-    $manifest = Join-Path $destination 'padscreen-install.json'
-    if (!(Test-Path -LiteralPath $manifest)) { throw 'No PadScreen VDD install manifest found. Use the original installer or Device Manager; no unrelated display driver will be removed.' }
+    $manifest = Join-Path $destination 'secondaryscreen-install.json'
+    if (!(Test-Path -LiteralPath $manifest)) { throw 'No SecondaryScreen VDD install manifest found. Use the original installer or Device Manager; no unrelated display driver will be removed.' }
     $state = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
     $device = Get-PnpDevice -InstanceId $state.InstanceId -ErrorAction SilentlyContinue
     $inf = $state.InfName
@@ -15,8 +15,8 @@ try {
         if (@($ids) -notcontains 'Root\MttVDD') { throw 'Recorded instance no longer has the VDD hardware ID. Refusing removal.' }
         $driver = Get-CimInstance Win32_PnPSignedDriver | Where-Object { $_.DeviceID -eq $device.InstanceId } | Select-Object -First 1
         if ($driver -and $driver.InfName) { $inf = $driver.InfName }
-        if (!('PadScreen.VddDeviceInstaller' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'VddDeviceInstaller.cs') }
-        [PadScreen.VddDeviceInstaller]::Remove($device.InstanceId)
+        if (!('SecondaryScreen.VddDeviceInstaller' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'VddDeviceInstaller.cs') }
+        [SecondaryScreen.VddDeviceInstaller]::Remove($device.InstanceId)
     }
     if ($inf -notmatch '^oem\d+\.inf$') { throw 'Cannot identify the exact published VDD INF. Keep the manifest and inspect pnputil /enum-drivers for MttVDD.inf. No broad driver removal was attempted.' }
     $publishedInf = Join-Path $env:windir "INF\$inf"

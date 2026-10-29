@@ -1,4 +1,4 @@
-package com.padscreen.client
+package com.secondaryscreen.client
 
 internal class ReconnectDelay {
     private var nextMs = 1000L

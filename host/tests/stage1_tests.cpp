@@ -278,11 +278,11 @@ int main(int argc, char** argv) {
         pds::WinsockRuntime winsock;
         pds::Require(winsock.Ready(), "Winsock runtime");
         if (argc == 3 && std::string_view(argv[1]) == "--soak-seconds") {
-            pds::SoakTest(std::filesystem::absolute(argv[0]).parent_path() / "padscreen-host.exe", std::stoi(argv[2]));
+            pds::SoakTest(std::filesystem::absolute(argv[0]).parent_path() / "secondaryscreen-host.exe", std::stoi(argv[2]));
             return 0;
         }
         pds::ProtocolTest(); pds::QueueTest(); pds::NetworkTest(); pds::JpegTest(); pds::CaptureTest();
-        if (argc > 0) pds::IntegrationTest(std::filesystem::absolute(argv[0]).parent_path() / "padscreen-host.exe");
+        if (argc > 0) pds::IntegrationTest(std::filesystem::absolute(argv[0]).parent_path() / "secondaryscreen-host.exe");
         LOG_INFO("All stage-1 host tests passed");
         return 0;
     } catch (const std::exception& error) { LOG_ERROR("FAIL: ", error.what()); return 1; }

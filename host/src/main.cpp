@@ -16,7 +16,7 @@ BOOL WINAPI ConsoleControl(DWORD event) {
 int HostMain(int argc, char** argv) {
     SessionOptions options;
     if (!ParseSessionOptions(argc, argv, options)) {
-        LOG_ERROR("Usage: padscreen-host [--display friendly-name | --capture-primary] [--list-displays] [--auto-resize | --no-auto-resize] [--force-extend] [--wgc-throttle on|off] [--queue-depth 1|2] [--port 51900] [--width 1280] [--height 800] [--fps 1..165] [--max-fps 0..165] [--bitrate 10000] [--quality 70] [--show-cursor true|false] [--disable-hardware] [--verbose] [--show-stats]");
+        LOG_ERROR("Usage: secondaryscreen-host [--display friendly-name | --capture-primary] [--list-displays] [--auto-resize | --no-auto-resize] [--force-extend] [--wgc-throttle on|off] [--queue-depth 1|2] [--port 51900] [--width 1280] [--height 800] [--fps 1..165] [--max-fps 0..165] [--bitrate 10000] [--quality 70] [--show-cursor true|false] [--disable-hardware] [--verbose] [--show-stats]");
         return 2;
     }
     if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {

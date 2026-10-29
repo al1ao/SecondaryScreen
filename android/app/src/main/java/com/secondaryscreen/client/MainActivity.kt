@@ -1,4 +1,4 @@
-package com.padscreen.client
+package com.secondaryscreen.client
 
 import android.app.Activity
 import android.graphics.Color

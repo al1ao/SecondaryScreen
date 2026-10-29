@@ -3,7 +3,7 @@ using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
-namespace PadScreen {
+namespace SecondaryScreen {
     public static class VddDeviceInstaller {
         static readonly Guid DisplayClass = new Guid("4d36e968-e325-11ce-bfc1-08002be10318");
         [StructLayout(LayoutKind.Sequential)] struct DeviceInfo {

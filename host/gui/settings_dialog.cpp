@@ -10,7 +10,7 @@
 #include <QVBoxLayout>
 namespace pds {
 SettingsDialog::SettingsDialog(const AppConfig& config,const std::vector<AdbDevice>& devices,QWidget* parent):QDialog(parent) {
-    setWindowTitle(QStringLiteral("PadScreen 设置"));setMinimumWidth(440);
+    setWindowTitle(QStringLiteral("SecondaryScreen 设置"));setMinimumWidth(440);
     auto* layout=new QVBoxLayout(this);auto* form=new QFormLayout;
     monitor_=new QComboBox(this);
     monitor_->addItem(QStringLiteral("自动选择虚拟显示器"),QString{});

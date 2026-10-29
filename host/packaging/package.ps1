@@ -14,7 +14,7 @@ try {
     $padBuild=(Resolve-Path -LiteralPath $BuildDirectory).Path
     $padQt=(Resolve-Path -LiteralPath $QtDirectory).Path
     # Always build current source; never copy build-v143 or stale stage-3 binaries.
-    & $CMake -S $padHostRoot -B $padBuild -DPADSCREEN_BUILD_GUI=ON "-DCMAKE_PREFIX_PATH=$padQt"
+    & $CMake -S $padHostRoot -B $padBuild -DSECONDARYSCREEN_BUILD_GUI=ON "-DCMAKE_PREFIX_PATH=$padQt"
     if($LASTEXITCODE){throw 'Configure failed'}
     & $CMake --build $padBuild --config Release
     if($LASTEXITCODE){throw 'Release build failed'}
@@ -22,8 +22,8 @@ try {
     $padDist=Join-Path $padBuild "dist/$padStamp"
     $padPayload=Join-Path $padDist 'payload'
     New-Item -ItemType Directory -Path $padPayload -Force | Out-Null
-    foreach($padExe in @('PadScreen.exe','padscreen-host.exe')){Copy-Item -LiteralPath (Join-Path $padBuild "Release/$padExe") -Destination $padPayload}
-    & (Join-Path $padQt 'bin/windeployqt.exe') --release --no-translations --no-system-d3d-compiler --no-system-dxc-compiler --no-opengl-sw --no-compiler-runtime (Join-Path $padPayload 'PadScreen.exe')
+    foreach($padExe in @('SecondaryScreen.exe','secondaryscreen-host.exe')){Copy-Item -LiteralPath (Join-Path $padBuild "Release/$padExe") -Destination $padPayload}
+    & (Join-Path $padQt 'bin/windeployqt.exe') --release --no-translations --no-system-d3d-compiler --no-system-dxc-compiler --no-opengl-sw --no-compiler-runtime (Join-Path $padPayload 'SecondaryScreen.exe')
     if($LASTEXITCODE){throw 'Qt release deployment failed'}
     foreach($padDll in @('msvcp140.dll','msvcp140_1.dll','msvcp140_2.dll','msvcp140_atomic_wait.dll','vcruntime140.dll','vcruntime140_1.dll','concrt140.dll')) {
         Copy-Item -LiteralPath (Join-Path $CrtDirectory $padDll) -Destination $padPayload
@@ -31,7 +31,7 @@ try {
     $padAdb=Join-Path $padPayload 'platform-tools'
     New-Item -ItemType Directory -Path $padAdb | Out-Null
     foreach($padFile in @('adb.exe','AdbWinApi.dll','AdbWinUsbApi.dll','NOTICE.txt','source.properties')){Copy-Item -LiteralPath (Join-Path $PlatformTools $padFile) -Destination $padAdb}
-    Copy-Item -LiteralPath $Apk -Destination (Join-Path $padPayload 'PadScreen.apk')
+    Copy-Item -LiteralPath $Apk -Destination (Join-Path $padPayload 'SecondaryScreen.apk')
     $padReadme=Get-Content -LiteralPath (Join-Path $padHostRoot '../README.md') -Raw -Encoding UTF8
     $padUserReadme=([regex]::Split($padReadme,'(?m)^## 构建与诊断'))[0]+"## 诊断`n`n安装目录 scripts/diagnose.ps1 可检查系统、显示器、adb 和端口；不改变显示设置或映射。许可证见 THIRD-PARTY-NOTICES.txt。`n"
     [IO.File]::WriteAllText((Join-Path $padPayload 'README.md'),$padUserReadme,[Text.UTF8Encoding]::new($false))
@@ -60,8 +60,8 @@ try {
     foreach($padFile in Get-ChildItem -LiteralPath $padPayload -Recurse -File){$padRelative=$padFile.FullName.Substring($padPayload.Length+1);$padDelete.Add('Delete "$INSTDIR\'+$padRelative+'"')}
     foreach($padDir in Get-ChildItem -LiteralPath $padPayload -Recurse -Directory | Sort-Object {$_.FullName.Length} -Descending){$padDelete.Add('RMDir "$INSTDIR\'+$padDir.FullName.Substring($padPayload.Length+1)+'"')}
     $padOwned=Join-Path $padDist 'owned-files.nsh';$padDelete | Set-Content -LiteralPath $padOwned -Encoding UTF8
-    $padSetup=Join-Path $padDist 'PadScreen-Setup.exe'
-    & $MakeNsis /INPUTCHARSET UTF8 "/DPAYLOAD=$padPayload" "/DOWNED_FILES=$padOwned" "/DOUTPUT=$padSetup" (Join-Path $PSScriptRoot 'PadScreen.nsi')
+    $padSetup=Join-Path $padDist 'SecondaryScreen-Setup.exe'
+    & $MakeNsis /INPUTCHARSET UTF8 "/DPAYLOAD=$padPayload" "/DOWNED_FILES=$padOwned" "/DOUTPUT=$padSetup" (Join-Path $PSScriptRoot 'SecondaryScreen.nsi')
     if($LASTEXITCODE){throw 'NSIS failed'}
     if((Get-Item -LiteralPath $padSetup).Length -ge 60000000){throw 'Installer exceeds 60 MB'}
     [ordered]@{Installer=$padSetup;Bytes=(Get-Item -LiteralPath $padSetup).Length;SHA256=(Get-FileHash -LiteralPath $padSetup).Hash;Payload=$padPayload} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $padDist 'package-result.json') -Encoding UTF8

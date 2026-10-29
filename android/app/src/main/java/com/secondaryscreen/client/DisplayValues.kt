@@ -1,4 +1,4 @@
-package com.padscreen.client
+package com.secondaryscreen.client
 
 import kotlin.math.roundToInt
 

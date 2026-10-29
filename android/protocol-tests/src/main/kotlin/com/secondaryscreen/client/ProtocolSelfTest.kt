@@ -1,4 +1,4 @@
-package com.padscreen.client
+package com.secondaryscreen.client
 
 import java.io.ByteArrayInputStream
 import java.io.EOFException

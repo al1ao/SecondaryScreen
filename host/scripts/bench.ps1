@@ -20,9 +20,9 @@ try {
     $outputRoot = (Resolve-Path -LiteralPath $OutputDirectory).Path
     if (Test-Path -LiteralPath (Join-Path $outputRoot "$Name-summary.json")) { throw 'Result already exists. Choose another -Name to preserve comparison evidence.' }
     if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) { throw "Port $Port already has a listener. Choose another -Port; existing host will not be stopped." }
-    $hostExecutable = (Resolve-Path -LiteralPath (Join-Path $BuildDirectory 'padscreen-host.exe')).Path
-    $probeExecutable = (Resolve-Path -LiteralPath (Join-Path $BuildDirectory 'padscreen-stage2-probe.exe')).Path
-    $syntheticExecutable = (Resolve-Path -LiteralPath (Join-Path $BuildDirectory 'padscreen-stage2-tests.exe')).Path
+    $hostExecutable = (Resolve-Path -LiteralPath (Join-Path $BuildDirectory 'secondaryscreen-host.exe')).Path
+    $probeExecutable = (Resolve-Path -LiteralPath (Join-Path $BuildDirectory 'secondaryscreen-stage2-probe.exe')).Path
+    $syntheticExecutable = (Resolve-Path -LiteralPath (Join-Path $BuildDirectory 'secondaryscreen-stage2-tests.exe')).Path
     $hostHash = (Get-FileHash -LiteralPath $hostExecutable -Algorithm SHA256).Hash
     $probeHash = (Get-FileHash -LiteralPath $probeExecutable -Algorithm SHA256).Hash
     $syntheticHash = (Get-FileHash -LiteralPath $syntheticExecutable -Algorithm SHA256).Hash

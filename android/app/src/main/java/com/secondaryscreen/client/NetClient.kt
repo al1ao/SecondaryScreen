@@ -1,4 +1,4 @@
-package com.padscreen.client
+package com.secondaryscreen.client
 
 import android.util.Log
 import java.io.EOFException
@@ -31,7 +31,7 @@ class NetClient(
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
-        worker = Thread({ runLoop() }, "PadScreen-Net").also { it.start() }
+        worker = Thread({ runLoop() }, "SecondaryScreen-Net").also { it.start() }
     }
     fun stop() {
         running.set(false)
@@ -134,5 +134,5 @@ class NetClient(
         override fun read(): Int = input?.read() ?: -1
         override fun read(bytes: ByteArray, off: Int, len: Int): Int = input?.read(bytes, off, len) ?: -1
     }
-    companion object { private const val TAG = "PadScreen" }
+    companion object { private const val TAG = "SecondaryScreen" }
 }

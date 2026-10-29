@@ -1,4 +1,4 @@
-package com.padscreen.client
+package com.secondaryscreen.client
 
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
@@ -21,7 +21,7 @@ class H264Renderer(
 ) {
     data class Support(val name: String?, val maxWidth: Int, val maxHeight: Int)
     private data class Packet(val bytes: ByteArray, val keyframe: Boolean, val timestampUs: Long, val generation: Int)
-    private val thread = HandlerThread("PadScreen-H264").apply { start() }
+    private val thread = HandlerThread("SecondaryScreen-H264").apply { start() }
     private val handler = Handler(thread.looper)
     private val gate = Any()
     private val pending = ArrayDeque<Packet>()
@@ -209,7 +209,7 @@ class H264Renderer(
         }
     }
     companion object {
-        private const val TAG = "PadScreen"
+        private const val TAG = "SecondaryScreen"
         fun probe(width: Int, height: Int): Support {
             return try {
                 // This app uses a regular Surface, so exclude secure/tunneled-only components.

@@ -1,4 +1,4 @@
-package com.padscreen.client
+package com.secondaryscreen.client
 
 fun displayValuesSelfTest() {
     val unavailable: () -> Pair<Int, Int> = { error("not available") }

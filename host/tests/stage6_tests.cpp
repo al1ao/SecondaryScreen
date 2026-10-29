@@ -89,7 +89,7 @@ void CadenceTest() {
     LOG_INFO("PASS stage 6: 90/120/144/165 FPS pacing policy (synthetic callback times, not hardware performance)");
 }
 void ConfigTest() {
-    const auto path=std::filesystem::temp_directory_path()/(L"PadScreen-stage6-"+std::to_wstring(GetCurrentProcessId())+L".json");
+    const auto path=std::filesystem::temp_directory_path()/(L"SecondaryScreen-stage6-"+std::to_wstring(GetCurrentProcessId())+L".json");
     struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code error;std::filesystem::remove(path,error);}} cleanup{path};
     pds::AppConfig value;value.max_fps=60;
     Check(pds::SaveConfig(path,value)&&pds::LoadConfig(path)==value,"v2 adaptive config roundtrip");

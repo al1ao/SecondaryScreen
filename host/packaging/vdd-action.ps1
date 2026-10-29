@@ -7,7 +7,7 @@ try {
     $padArguments=@('-NoProfile','-ExecutionPolicy','Bypass','-File',('"{0}"' -f $padScript))
     if($Action -eq 'install'){
         $padArguments+=@('-CacheDirectory',('"{0}"' -f (Join-Path $PSScriptRoot '../vdd-cache')))
-        if(!(Test-Path -LiteralPath 'C:\VirtualDisplayDriver\vdd_settings.xml')){$padArguments+='-UsePadScreenConfig'}
+        if(!(Test-Path -LiteralPath 'C:\VirtualDisplayDriver\vdd_settings.xml')){$padArguments+='-UseSecondaryScreenConfig'}
     }
     $padHelper=Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $padArguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
     exit $padHelper.ExitCode

@@ -11,11 +11,26 @@ uint32_t Number(const nlohmann::json& value,uint32_t minimum,uint32_t maximum) {
     return value.get<uint32_t>();
 }
 }
+namespace {
+// Versions before the rename stored settings under the old product folder.
+void MigrateLegacyConfig(const std::filesystem::path& current) {
+    try {
+        if (std::filesystem::exists(current)) return;
+        const auto legacy = current.parent_path().parent_path() / L"PadScreen" / L"config.json";
+        if (!std::filesystem::exists(legacy)) return;
+        std::filesystem::create_directories(current.parent_path());
+        std::filesystem::copy_file(legacy, current, std::filesystem::copy_options::skip_existing);
+        LOG_INFO("Config migrated from legacy folder");
+    } catch (const std::exception& error) { LOG_WARN("Legacy config migration skipped: ", error.what()); }
+}
+}
 std::filesystem::path ConfigPath() {
     PWSTR folder = nullptr;
     if (!LOG_HR(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_CREATE, nullptr, &folder), "Roaming AppData")) return {};
-    const auto path = std::filesystem::path(folder) / L"PadScreen" / L"config.json";
-    CoTaskMemFree(folder); return path;
+    const auto path = std::filesystem::path(folder) / L"SecondaryScreen" / L"config.json";
+    CoTaskMemFree(folder);
+    MigrateLegacyConfig(path);
+    return path;
 }
 AppConfig LoadConfig(const std::filesystem::path& path) {
     AppConfig value;
@@ -65,16 +80,17 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config) {
 }
 bool AutoStartEnabled() {
     std::wstring command(32768,L'\0');DWORD bytes=static_cast<DWORD>(command.size()*sizeof(wchar_t));
-    if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",L"PadScreen",RRF_RT_REG_SZ,nullptr,command.data(),&bytes)!=ERROR_SUCCESS)return false;
+    // A legacy entry still pointing at the old executable is stale, not enabled.
+    if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",L"SecondaryScreen",RRF_RT_REG_SZ,nullptr,command.data(),&bytes)!=ERROR_SUCCESS)return false;
     command.resize(bytes/sizeof(wchar_t));while(!command.empty()&&command.back()==L'\0')command.pop_back();
-    return command==QuoteArgument((ExecutableDirectory()/L"PadScreen.exe").wstring());
+    return command==QuoteArgument((ExecutableDirectory()/L"SecondaryScreen.exe").wstring());
 }
 bool SetAutoStart(bool enabled) {
     HKEY key = nullptr;
     const auto opened = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
     if (opened != ERROR_SUCCESS) return LOG_HR(HRESULT_FROM_WIN32(opened), "Open user startup key");
-    const auto command = QuoteArgument((ExecutableDirectory() / L"PadScreen.exe").wstring());
-    const auto status = enabled ? RegSetValueExW(key, L"PadScreen", 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()), static_cast<DWORD>((command.size()+1)*sizeof(wchar_t))) : RegDeleteValueW(key,L"PadScreen");
+    const auto command = QuoteArgument((ExecutableDirectory() / L"SecondaryScreen.exe").wstring());
+    const auto status = enabled ? RegSetValueExW(key, L"SecondaryScreen", 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()), static_cast<DWORD>((command.size()+1)*sizeof(wchar_t))) : RegDeleteValueW(key,L"SecondaryScreen");
     RegCloseKey(key);
     return status == ERROR_SUCCESS || (!enabled && status == ERROR_FILE_NOT_FOUND) || LOG_HR(HRESULT_FROM_WIN32(status), "Update user startup");
 }

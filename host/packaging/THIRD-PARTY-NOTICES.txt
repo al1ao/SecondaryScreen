@@ -1,4 +1,4 @@
-PadScreen 0.5.0 - third-party notices
+SecondaryScreen 0.5.0 - third-party notices
 
 Qt 6.8.3: dynamically linked Core, Gui, Widgets and Network, with release plugins.
 Qt is used under LGPL version 3; license texts and the upstream SPDX attribution
@@ -23,6 +23,6 @@ It downloads and verifies the driver only when explicitly selected, with UAC.
 No driver or test-signing change is performed by installing the base app.
 https://github.com/VirtualDrivers/Virtual-Display-Driver
 
-PadScreen.apk is a development APK signed with the build machine's debug key.
+SecondaryScreen.apk is a development APK signed with the build machine's debug key.
 Android hardware, foreground-service lifecycle and physical USB recovery still
 require device acceptance. This installer is not code signed.

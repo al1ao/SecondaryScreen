@@ -69,7 +69,7 @@ int wmain(int argc,wchar_t** argv) {
         // Isolated integration fixture only: mock USB readiness, never video or codec.
         // This test executable is never shipped in the release payload.
         std::string reply;
-        if(argc>1&&std::wstring_view(argv[1])==L"devices")reply="List of devices attached\nPADSCREEN_TEST_ONLY device model:Simulated_USB\n";
+        if(argc>1&&std::wstring_view(argv[1])==L"devices")reply="List of devices attached\nSECONDARYSCREEN_TEST_ONLY device model:Simulated_USB\n";
         for(int i=1;i<argc;++i)if(std::wstring_view(argv[i])==L"--list")reply="TestTransport tcp:52150 tcp:52150\n";
         DWORD count=0;return WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),reply.data(),static_cast<DWORD>(reply.size()),&count,nullptr)?0:1;
     }
@@ -85,9 +85,9 @@ int wmain(int argc,wchar_t** argv) {
     }
     try {
         wchar_t temporary[MAX_PATH]{};Check(GetTempPathW(MAX_PATH,temporary)>0,"temp directory");
-        const auto directory=std::filesystem::path(temporary)/(L"PadScreen-stage5-"+std::to_wstring(GetCurrentProcessId()));
+        const auto directory=std::filesystem::path(temporary)/(L"SecondaryScreen-stage5-"+std::to_wstring(GetCurrentProcessId()));
         Check(std::filesystem::create_directory(directory),"fresh isolated fixture directory");
         struct Cleanup {std::filesystem::path path;~Cleanup(){std::error_code error;std::filesystem::remove_all(path,error);}} cleanup{directory};
-        ConfigTest(directory);AdbTest();ProcessTest(pds::ExecutableDirectory()/L"padscreen-stage5-tests.exe");return 0;
+        ConfigTest(directory);AdbTest();ProcessTest(pds::ExecutableDirectory()/L"secondaryscreen-stage5-tests.exe");return 0;
     }catch(const std::exception& error){LOG_ERROR("FAIL stage 5: ",error.what());return 1;}
 }

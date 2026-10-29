@@ -2,7 +2,7 @@
 param([string]$BuildDirectory=(Join-Path $PSScriptRoot '../build-stage6'))
 $ErrorActionPreference='Stop'
 $padBuild=(Resolve-Path -LiteralPath $BuildDirectory).Path
-$padExe=Join-Path $padBuild 'Release/padscreen-host.exe'
+$padExe=Join-Path $padBuild 'Release/secondaryscreen-host.exe'
 $padCases=@(
     @{Name='cap';Args=@('--width','320','--height','200','--fps','144','--max-fps','60');Width=320;Height=200;Fps=60},
     @{Name='unlimited';Args=@('--width','320','--height','200','--fps','90','--max-fps','0');Width=320;Height=200;Fps=90},

@@ -1,4 +1,4 @@
-package com.padscreen.client
+package com.secondaryscreen.client
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -82,7 +82,7 @@ class JpegRenderer(private val surfaceView: SurfaceView, private val status: (St
                 }
             } catch (error: RuntimeException) {
                 // Surface may disappear between isValid and lockCanvas while the Activity stops.
-                Log.w("PadScreen", "Surface unavailable", error)
+                Log.w("SecondaryScreen", "Surface unavailable", error)
             } finally { bitmap.recycle() }
         }
     }

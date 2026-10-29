@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- PadScreen template using the VDD 25.7.23 release schema.
+<!-- SecondaryScreen template using the VDD 25.7.23 release schema.
      Global rates use the upstream documented replication syntax; no duplicate
      resolution entries are assumed. Existing system XML is never overwritten. -->
 <vdd_settings>

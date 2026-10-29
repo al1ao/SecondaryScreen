@@ -28,7 +28,7 @@ Tray::Tray(bool smoke):smoke_(smoke) {
     config_path_=smoke?ExecutableDirectory()/L"smoke-config"/L"config.json":ConfigPath();
     if(config_path_.empty())throw std::runtime_error("cannot locate config directory");
     config_=LoadConfig(config_path_);if(!smoke)config_.auto_start=AutoStartEnabled();log_directory_=config_path_.parent_path()/L"logs";
-    std::filesystem::create_directories(log_directory_);log_.open(log_directory_/L"padscreen.log",std::ios::app);
+    std::filesystem::create_directories(log_directory_);log_.open(log_directory_/L"secondaryscreen.log",std::ios::app);
     if(!log_)throw std::runtime_error("cannot open log file");
     menu_=new QMenu;status_=menu_->addAction(QStringLiteral("未启动"));status_->setEnabled(false);menu_->addSeparator();
     toggle_=menu_->addAction(QStringLiteral("停止服务"));
@@ -38,12 +38,12 @@ Tray::Tray(bool smoke):smoke_(smoke) {
     connect(menu_->addAction(QStringLiteral("显示统计")),&QAction::triggered,this,[this]{ToggleStats();});
     connect(menu_->addAction(QStringLiteral("打开日志目录")),&QAction::triggered,this,[this]{QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdWString(log_directory_.wstring())));});
     menu_->addSeparator();connect(menu_->addAction(QStringLiteral("退出")),&QAction::triggered,qApp,&QApplication::quit);
-    tray_=new QSystemTrayIcon(StatusIcon(TrayState::Stopped),this);tray_->setContextMenu(menu_);tray_->setToolTip(QStringLiteral("PadScreen"));tray_->show();
+    tray_=new QSystemTrayIcon(StatusIcon(TrayState::Stopped),this);tray_->setContextMenu(menu_);tray_->setToolTip(QStringLiteral("SecondaryScreen"));tray_->show();
     connect(tray_,&QSystemTrayIcon::activated,this,[this](QSystemTrayIcon::ActivationReason reason){if(reason==QSystemTrayIcon::Trigger)ToggleStats();});
-    stats_=new QWidget;stats_->setWindowTitle(QStringLiteral("PadScreen 统计"));stats_->resize(500,240);
+    stats_=new QWidget;stats_->setWindowTitle(QStringLiteral("SecondaryScreen 统计"));stats_->resize(500,240);
     auto* layout=new QVBoxLayout(stats_);stats_text_=new QLabel(QStringLiteral("等待连接\n编码数据将在连接后显示"),stats_);stats_text_->setWordWrap(true);stats_text_->setTextInteractionFlags(Qt::TextSelectableByMouse);layout->addWidget(stats_text_);
     SetLogSink([this](LogLevel level,const std::string& line){
-        if(log_.tellp()>4*1024*1024){log_.close();std::error_code error;std::filesystem::remove(log_directory_/L"previous.log",error);std::filesystem::rename(log_directory_/L"padscreen.log",log_directory_/L"previous.log",error);log_.open(log_directory_/L"padscreen.log",std::ios::trunc);}
+        if(log_.tellp()>4*1024*1024){log_.close();std::error_code error;std::filesystem::remove(log_directory_/L"previous.log",error);std::filesystem::rename(log_directory_/L"secondaryscreen.log",log_directory_/L"previous.log",error);log_.open(log_directory_/L"secondaryscreen.log",std::ios::trunc);}
         constexpr const char* levels[]{"TRACE","DEBUG","INFO","WARN","ERROR"};
         log_<<'['<<levels[static_cast<unsigned>(level)]<<"] "<<line<<'\n';log_.flush();
         QMetaObject::invokeMethod(this,[this,level,line]{OnLog(level,line);},Qt::QueuedConnection);
@@ -91,8 +91,8 @@ void Tray::Monitor(std::stop_token stop) {
 void Tray::SetState(TrayState state,const QString& message) {
     Q_ASSERT(QThread::currentThread()==qApp->thread());
     if(message!=last_status_)LOG_INFO("Tray state=",static_cast<unsigned>(state)," ",message.toStdString());
-    tray_->setIcon(StatusIcon(state));status_->setText(message);tray_->setToolTip(QStringLiteral("PadScreen · ")+message);
-    if(state==TrayState::Error && message!=last_status_)tray_->showMessage(QStringLiteral("PadScreen"),message,QSystemTrayIcon::Warning);
+    tray_->setIcon(StatusIcon(state));status_->setText(message);tray_->setToolTip(QStringLiteral("SecondaryScreen · ")+message);
+    if(state==TrayState::Error && message!=last_status_)tray_->showMessage(QStringLiteral("SecondaryScreen"),message,QSystemTrayIcon::Warning);
     last_status_=message;stats_text_->setText(message+QStringLiteral("\n\n")+last_stats_);
 }
 void Tray::OnLog(LogLevel,const std::string& line) {
@@ -114,9 +114,9 @@ void Tray::ShowSettings() {
     SettingsDialog dialog(config,devices_);
     if(dialog.exec()!=QDialog::Accepted)return;
     const auto next=dialog.Value();
-    if(!SaveConfig(config_path_,next)){QMessageBox::warning(nullptr,QStringLiteral("PadScreen"),QStringLiteral("配置保存失败，原设置未改变"));return;}
+    if(!SaveConfig(config_path_,next)){QMessageBox::warning(nullptr,QStringLiteral("SecondaryScreen"),QStringLiteral("配置保存失败，原设置未改变"));return;}
     if(next.auto_start!=config.auto_start&&!SetAutoStart(next.auto_start)) {
-        SaveConfig(config_path_,config);QMessageBox::warning(nullptr,QStringLiteral("PadScreen"),QStringLiteral("开机自启设置失败，已恢复原配置"));return;
+        SaveConfig(config_path_,config);QMessageBox::warning(nullptr,QStringLiteral("SecondaryScreen"),QStringLiteral("开机自启设置失败，已恢复原配置"));return;
     }
     {std::lock_guard lock(mutex_);config_=next;}Request(true);
 }
