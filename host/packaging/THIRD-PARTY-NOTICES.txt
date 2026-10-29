@@ -1,0 +1,28 @@
+PadScreen 0.5.0 - third-party notices
+
+Qt 6.8.3: dynamically linked Core, Gui, Widgets and Network, with release plugins.
+Qt is used under LGPL version 3; license texts and the upstream SPDX attribution
+inventory are in licenses/. Qt DLLs can be replaced by compatible user builds.
+Corresponding unmodified source:
+https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qtbase-everywhere-src-6.8.3.tar.xz
+https://code.qt.io/cgit/qt/qtbase.git/tree/?h=v6.8.3
+
+nlohmann/json 3.11.3: MIT; license included in licenses/.
+https://github.com/nlohmann/json/tree/v3.11.3
+
+Android Platform Tools: the package includes adb and its two Windows DLLs.
+Their upstream notices are in platform-tools/NOTICE.txt. The SDK version is
+recorded in platform-tools/source.properties.
+https://developer.android.com/tools/releases/platform-tools
+
+Microsoft Visual C++ release runtime DLLs are deployed app-locally under the
+Visual Studio redistribution terms. No debug runtime is included.
+
+The optional VDD component uses the existing pinned official driver installer.
+It downloads and verifies the driver only when explicitly selected, with UAC.
+No driver or test-signing change is performed by installing the base app.
+https://github.com/VirtualDrivers/Virtual-Display-Driver
+
+PadScreen.apk is a development APK signed with the build machine's debug key.
+Android hardware, foreground-service lifecycle and physical USB recovery still
+require device acceptance. This installer is not code signed.

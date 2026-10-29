@@ -88,5 +88,9 @@ fun main() {
     check(unknownHeader.type == 0x1234 && unknownHeader.length == 0)
     unknown.readPayload(0)
     check(unknown.readHeader()?.type == MessageType.HELLO)
-    println("PASS: exact HELLO vector, ACK/FrameInfo, fragmented/coalesced TCP, reusable buffer, EOF, invalid lengths/magic, unknown types; stage2 caps=3, H264 ACK, Annex-B keyframe and codec-config splitting")
+    val reconnectDelay = ReconnectDelay()
+    check(List(8) { reconnectDelay.take() } == listOf(1000L, 2000L, 4000L, 5000L, 5000L, 5000L, 5000L, 5000L))
+    reconnectDelay.reset()
+    check(reconnectDelay.take() == 1000L)
+    println("PASS: exact HELLO vector, ACK/FrameInfo, fragmented/coalesced TCP, reusable buffer, EOF, invalid lengths/magic, unknown types; stage2 caps=3, H264 ACK, Annex-B keyframe and codec-config splitting; stage5 reconnect backoff cap/reset")
 }

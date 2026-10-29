@@ -6,11 +6,16 @@
 #include <mutex>
 #include <sstream>
 #include <utility>
+#include <functional>
 
 namespace pds {
 enum class LogLevel { Trace, Debug, Info, Warn, Error };
 inline std::atomic<LogLevel> g_log_level{LogLevel::Info};
 inline std::mutex g_log_mutex;
+inline std::function<void(LogLevel, const std::string&)> g_log_sink;
+inline void SetLogSink(std::function<void(LogLevel, const std::string&)> sink) {
+    std::lock_guard lock(g_log_mutex); g_log_sink = std::move(sink);
+}
 template <typename... Args>
 void Log(LogLevel level, Args&&... args) {
     if (level < g_log_level.load()) return;
@@ -19,6 +24,7 @@ void Log(LogLevel level, Args&&... args) {
     (line << ... << std::forward<Args>(args));
     std::lock_guard lock(g_log_mutex);
     std::cerr << '[' << names[static_cast<int>(level)] << "] " << line.str() << '\n';
+    if (g_log_sink) g_log_sink(level, line.str()); // Sink must not log recursively.
 }
 inline bool CheckHr(HRESULT hr, const char* context) {
     if (SUCCEEDED(hr)) return true;

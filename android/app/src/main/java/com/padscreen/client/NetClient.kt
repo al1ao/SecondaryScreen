@@ -32,7 +32,7 @@ class NetClient(
     }
     fun stop() {
         running.set(false)
-        synchronized(socketLock) { socket?.close(); socket = null }
+        synchronized(socketLock) { try { socket?.close() } catch (error: IOException) { Log.w(TAG, "Close stopped session", error) }; socket = null }
         worker?.interrupt()
         // The worker holds only its renderer/status callbacks, both invalidated by Activity onStop.
         // It exits after socket.close/interrupt; avoid blocking the UI on a network thread join.
@@ -46,6 +46,7 @@ class NetClient(
         // One 16 MiB payload buffer is reused even across reconnect attempts.
         val payloadReaderFactory = ReusableInputStream()
         val reader = MessageReader(payloadReaderFactory)
+        val reconnectDelay = ReconnectDelay()
         while (running.get()) {
             status("连接中…")
             try {
@@ -80,6 +81,7 @@ class NetClient(
                         val payload = reader.readPayload(header.length)
                         if (header.type == MessageType.VIDEO_FRAME) {
                             val frame = parseFrameInfo(payload, header.length, ack)
+                            reconnectDelay.reset()
                             if (frame.frameId <= lastFrameId) throw ProtocolException("frame_id 未递增")
                             if (ack.codec == Codec.H264 && lastFrameId != 0L && frame.frameId != lastFrameId + 1)
                                 h264Renderer.referenceGap()
@@ -103,13 +105,13 @@ class NetClient(
             } catch (error: RuntimeException) {
                 if (running.get()) { status("错误: ${error.message}；重连中…"); Log.e(TAG, "Client error", error) }
             } finally {
-                synchronized(socketLock) { socket?.close(); socket = null }
+                synchronized(socketLock) { try { socket?.close() } catch (error: IOException) { Log.w(TAG, "Close disconnected session", error) }; socket = null }
                 payloadReaderFactory.input = null
                 renderer.disconnected()
                 h264Renderer.disconnected()
             }
             if (!running.get()) break
-            try { Thread.sleep(1000) } catch (_: InterruptedException) { break }
+            try { Thread.sleep(reconnectDelay.take()) } catch (_: InterruptedException) { break }
         }
     }
     private fun readAck(reader: MessageReader): HelloAck {

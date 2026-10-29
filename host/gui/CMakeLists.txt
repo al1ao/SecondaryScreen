@@ -1,0 +1,6 @@
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Network)
+qt_standard_project_setup()
+qt_add_executable(PadScreen WIN32 main.cpp tray.cpp tray.h settings_dialog.cpp settings_dialog.h resources/app.rc)
+target_link_libraries(PadScreen PRIVATE padscreen-app Qt6::Widgets Qt6::Network)
+target_compile_definitions(PadScreen PRIVATE QT_NO_KEYWORDS)
+set_target_properties(PadScreen PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>")
