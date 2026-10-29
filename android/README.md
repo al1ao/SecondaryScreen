@@ -1,6 +1,10 @@
-# PadScreen Android — 阶段 5 外壳加固
+# SecondaryScreen Android
 
 Kotlin，minSdk 26 / compileSdk 34 / targetSdk 34。平台 Activity + SurfaceView；保留 BitmapFactory / JPEG，新增 MediaCodec / H264。
+
+应用显示名为 SecondaryScreen，版本 0.6.1（versionCode 7），包名仍为 `com.padscreen.client`，兼容现有电脑端自动启动和覆盖升级。启动图标及预览见 [图标资源](artwork/README.md)。
+
+本次独立 APK 输出为 `build/outputs/SecondaryScreen-0.6.1.apk`，使用与上一版相同的开发签名。构建、协议自测、Lint 和签名校验通过；Lint 剩余两项既有横屏/备份配置提示，未做真机安装验证。
 
 完整环境、两端构建、adb reverse、运行步骤、统计开关和当前限制见 [阶段 2 运行说明](../host/README-stage2.md)。
 

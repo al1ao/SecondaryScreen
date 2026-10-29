@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SecondaryScreen</string>
+    <string name="foreground_channel_name">SecondaryScreen 连接</string>
+    <string name="foreground_notification_title">SecondaryScreen 保活已开启</string>
+</resources>
