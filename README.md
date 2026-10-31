@@ -30,6 +30,10 @@
 
 检查数据线是否能传数据、平板是否开启 USB 调试及是否点了“允许”。若显示“多个设备”，在设置里选定平板；若提示 App 未安装，先安装安装目录里的 APK。
 
+### 托盘提示“adb 启动失败”或“无法读取 USB 设备”？
+
+多为残留的 adb 服务占用本机 5037 端口、其他安卓工具（如 Android Studio）的 adb 版本不一致，或安全软件拦截。双击仓库 `tools\adb-diagnose.bat`（或 `powershell -ExecutionPolicy Bypass -File .\tools\adb-diagnose.ps1`）：脚本会列出 adb 进程与 5037 占用者，在确认后结束残留 adb，并用安装目录自带的 adb 手动执行 `start-server`，把全过程写入脚本旁的 `adb-diagnosis.txt`。若手动 `start-server` 很快成功、但托盘仍报失败，请把该报告反馈给开发者——这通常意味着 adb 冷启动超过了程序的 5 秒超时。
+
 ### 红色图标提示找不到虚拟显示器？
 
 查看 Windows 显示设置是否已有第二块屏并启用扩展。没有时重新安装并选择可选 VDD 组件；已有其他软件安装的驱动不会被覆盖。也可以在设置中临时选择主显示器检查接收显示。
@@ -78,7 +82,7 @@
 
 安装目录 `scripts/diagnose.ps1` 可检查系统、显示器、adb、端口和桌面进程，不改显示设置或映射。许可证与 Qt 对应源代码链接见安装目录 `THIRD-PARTY-NOTICES.txt`。
 
-仓库 `tools/` 下另有两个诊断脚本：
+仓库 `tools/` 下另有三个诊断脚本：
 
 ```powershell
 # 列出所有显示适配器、支持的模式、VDD 配置
@@ -86,7 +90,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\check-displays.ps1
 
 # 只查虚拟屏支持的分辨率和刷新率
 powershell -ExecutionPolicy Bypass -File .\tools\check-vdd-modes.ps1
+
+# adb 启动失败排查（也可直接双击 tools\adb-diagnose.bat）
+powershell -ExecutionPolicy Bypass -File .\tools\adb-diagnose.ps1
 ```
+
+`adb-diagnose` 会列出 adb 进程与 5037 端口占用、手动执行一次 `adb start-server` 并记录耗时，在发现残留 adb 时会先征求确认再结束它们；报告写入脚本旁的 `adb-diagnosis.txt`，其中本机用户名已替换为 `<user>`，分享前仍请自行检查路径信息。
 
 ## 许可证
 
