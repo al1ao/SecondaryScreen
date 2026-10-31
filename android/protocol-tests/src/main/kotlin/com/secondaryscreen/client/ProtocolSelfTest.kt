@@ -46,6 +46,30 @@ fun main() {
     check(stats.snapshot(1_030_000).rttMs == 0L)
     check(stats.snapshot(3_100_000).latencyMs == null)
     check(stats.snapshot(3_100_000).rttMs == null)
+    val steady = SessionStats()
+    for (index in 1..60) {
+        val at = 10_000_000L + index * 16_666L
+        steady.onFrameReceived(0, at, 1_000)
+        steady.onFrameRendered(at)
+        if (index % 30 == 0) steady.snapshot(at)
+    }
+    val steadySample = steady.snapshot(11_000_000)
+    check(steadySample.renderFps == 60.0 && steadySample.receivedFps == 60.0)
+    check(steadySample.bitrateKbps == 480L)
+    check(steady.snapshot(11_000_000) == steadySample)
+    val receiveOnly = SessionStats()
+    repeat(60) { receiveOnly.onFrameReceived(0, 20_000_000L + it * 16_666L, 100) }
+    check(receiveOnly.snapshot(21_000_000).renderFps == 0.0)
+    val interrupted = SessionStats()
+    repeat(144) { interrupted.onFrameRendered(30_000_000L + it * 16_666L) }
+    check(interrupted.snapshot(32_400_000).renderFps in 58.0..61.0)
+    check(interrupted.snapshot(33_400_000).renderFps == 0.0)
+    val boundary = SessionStats()
+    repeat(25) { boundary.onFrameRendered(40_040_000L + it * 40_000L) }
+    check(25 * 1_000_000.0 / 1_004_000.0 in 24.8..25.0) // Old closed-window display: 24.9.
+    check(boundary.snapshot(41_004_000).renderFps == 25.0)
+    boundary.onDecodeDropped(2); boundary.onFrameGap(3); boundary.onRenderQueueOverwrite()
+    check(boundary.snapshot(41_004_000).dropped == 6L)
     check(InputValues.ppm(50f, 100) == 500000 && InputValues.ppm(120f, 100) == 1000000)
     check(!InputValues.sendMove(1000, 8999) && InputValues.sendMove(1000, 9000))
     check(OverlayText.format(null, null, null, null, 0, 0, 0, 0, false, false, false).isEmpty())

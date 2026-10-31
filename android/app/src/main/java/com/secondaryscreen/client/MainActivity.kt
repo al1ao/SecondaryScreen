@@ -57,11 +57,11 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
                 return
             }
             val sample = stats.snapshot(SystemClock.elapsedRealtimeNanos() / 1000)
-            val text = OverlayText.format(sample.fps, sample.rttMs, sample.latencyMs,
+            val text = OverlayText.format(sample.renderFps, sample.rttMs, sample.latencyMs,
                 if (current.codec == Codec.H264) "H264" else "JPEG",
                 current.width, current.height, sample.bitrateKbps, sample.dropped,
                 settings.showFps || debugStats, settings.showLink || debugStats,
-                settings.showLatency || debugStats)
+                settings.showLatency || debugStats, if (debugStats) sample else null)
             statsLabel.text = text
             statsLabel.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
             ui.postDelayed(this, 500)

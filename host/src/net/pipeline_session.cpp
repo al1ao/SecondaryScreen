@@ -292,8 +292,18 @@ struct PipelineSession::Impl {
         std::unique_lock lock(wait_mutex);
         wait_cv.wait_until(lock, stop.get_token(), deadline, [this] { return !running.load(); });
     }
+    void RecordCaptureGap(uint64_t& previous_us) {
+        const auto now = NowUs();
+        if (previous_us != 0) {
+            const auto gap = now - previous_us;
+            auto maximum = capture_gap_max_us.load();
+            while (gap > maximum && !capture_gap_max_us.compare_exchange_weak(maximum, gap)) {}
+        }
+        previous_us = now;
+    }
     void CaptureCpu(std::promise<std::pair<uint32_t, uint32_t>> ready) {
         bool signaled = false;
+        uint64_t last_capture_us = 0;
         try {
             ComApartment apartment;
             auto capture = options.capture_primary ? CreateGdiCapture() : CreateGdiMonitorCapture(monitor, options.show_cursor);
@@ -305,6 +315,7 @@ struct PipelineSession::Impl {
             while (running.load()) {
                 RawFrame frame;
                 if (capture->Capture(frame.cpu)) {
+                    RecordCaptureGap(last_capture_us);
                     if (!dump_attempted && !options.dump_first_frame.empty()) {
                         dump_attempted = true;
                         DumpFirstFrame(frame.cpu, options.dump_first_frame, "gdi", monitor.orientation);
@@ -322,6 +333,7 @@ struct PipelineSession::Impl {
         }
     }
     void CaptureGpu() {
+        uint64_t last_capture_us = 0;
         try {
             const auto interval = std::chrono::microseconds(1000000u / fps);
             auto deadline = std::chrono::steady_clock::now();
@@ -329,6 +341,7 @@ struct PipelineSession::Impl {
             while (running.load()) {
                 RawFrame frame;
                 if (gpu_capture->Capture(frame.gpu)) {
+                    RecordCaptureGap(last_capture_us);
                     if (first) { LOG_INFO("WGC first captured frame"); first = false; }
                     raw_dropped.fetch_add(raw.Push(std::move(frame)));
                     deadline = (std::max)(deadline + interval, std::chrono::steady_clock::now());
@@ -377,7 +390,7 @@ struct PipelineSession::Impl {
     void Send() {
         Packet packet;
         uint32_t last_id = 0;
-        uint64_t sent = 0, send_us = 0;
+        uint64_t sent = 0, send_us = 0, send_block_max_us = 0, idr = 0;
         auto last_stats = NowUs();
         while (packets.Pop(packet, stop.get_token())) {
             // Never render a P-frame after an encoded-queue gap. Request an IDR
@@ -389,7 +402,9 @@ struct PipelineSession::Impl {
             { std::lock_guard lock(write_mutex);
               if (!SendFrame(socket.Get(), packet.frame, packet.id, codec)) break; }
             const auto now = NowUs();
-            send_us += now - began; ++sent; last_id = packet.id;
+            send_us += now - began; send_block_max_us = (std::max)(send_block_max_us, now - began);
+            if (packet.frame.keyframe) ++idr;
+            ++sent; last_id = packet.id;
             if (now - last_stats >= 5000000) {
                 const auto timings = encode_timings.TakeWindow();
                 const auto count = timings.window.count, total_encode = timings.window.total_us;
@@ -401,13 +416,15 @@ struct PipelineSession::Impl {
                     "ms encode_session_p95_upper=", static_cast<double>(timings.session.p95_upper_us) / 1000.0,
                     "ms encode_samples=", timings.session.count,
                     " send=", sent ? static_cast<double>(send_us) / static_cast<double>(sent) / 1000.0 : 0.0,
+                    "ms send_block_max_ms=", static_cast<double>(send_block_max_us) / 1000.0,
+                    " idr=", idr, " capture_gap_ms=", static_cast<double>(capture_gap_max_us.exchange(0)) / 1000.0,
                     "ms queue=", packets.Size(), " drop=", raw_dropped.load() + encoded_dropped.load() + capture_drops,
                     " raw_drop=", raw_dropped.load(), " encoded_drop=", encoded_dropped.load(), " wgc_drop=", capture_drops,
                     " wgc_throttled=", codec == Codec::H264 ? static_cast<WgcCapture*>(gpu_capture.get())->Throttled() : 0,
                     " wgc_received=", codec == Codec::H264 ? static_cast<WgcCapture*>(gpu_capture.get())->Received() : 0,
                     " wgc_copied=", codec == Codec::H264 ? static_cast<WgcCapture*>(gpu_capture.get())->Copied() : 0);
                 if (options.show_stats) LOG_INFO("capture_to_send=", static_cast<double>(now - packet.frame.capture_ts_us) / 1000.0, "ms (host clock only)");
-                sent = 0; send_us = 0; last_stats = now;
+                sent = 0; send_us = 0; send_block_max_us = 0; idr = 0; last_stats = now;
             }
         }
         Stop();
@@ -422,6 +439,7 @@ struct PipelineSession::Impl {
     BoundedQueue<Packet> packets;
     std::atomic<bool> running{false}, force_keyframe{false};
     std::atomic<uint64_t> raw_dropped{0}, encoded_dropped{0};
+    std::atomic<uint64_t> capture_gap_max_us{0};
     TimingStats encode_timings;
     std::stop_source stop;
     std::condition_variable_any wait_cv;

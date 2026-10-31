@@ -40,6 +40,11 @@ class H264Renderer(
     private var lastStats = 0L
     private var rawClockDeltaMs = 0.0
     private var dropped = 0L
+    private var queueDrop = 0L
+    private var firstKeyframeDrop = 0L
+    private var resetCount = 0L
+    private var decodeMaxUs = 0L
+    private var pendingPeak = 0
 
     fun startSession(newWidth: Int, newHeight: Int, newFps: Int) {
         synchronized(gate) {
@@ -54,7 +59,9 @@ class H264Renderer(
                     // Reconnects and changed HELLO_ACK dimensions always get a new codec.
                     releaseCodec()
                     gotFirstKeyframe = false; resetRequired = false
-                    rendered = 0; lastStats = SystemClock.elapsedRealtime()
+                    rendered = 0; queueDrop = 0; firstKeyframeDrop = 0; resetCount = 0
+                    decodeMaxUs = 0; pendingPeak = 0
+                    lastStats = SystemClock.elapsedRealtime()
                 }
             }
         }
@@ -62,13 +69,15 @@ class H264Renderer(
     fun submit(bytes: ByteArray, offset: Int, length: Int, isKeyframe: Boolean, timestampUs: Long) {
         synchronized(gate) {
             if (!active) return
-            if (pending.size >= 2) {
+            if (pending.size >= 4) {
                 dropped += pending.size
-                sessionStats?.onFrameDropped(pending.size.toLong())
+                queueDrop += pending.size
+                sessionStats?.onDecodeDropped(pending.size.toLong())
                 pending.clear()
                 resetRequired = true // Losing a reference frame requires a new IDR, not just a newer P-frame.
             }
             pending.addLast(Packet(bytes.copyOfRange(offset, offset + length), isKeyframe, timestampUs, generation))
+            pendingPeak = maxOf(pendingPeak, pending.size)
             if (!posted) { posted = true; handler.post(consume) }
         }
     }
@@ -87,7 +96,11 @@ class H264Renderer(
                     posted = false
                     if (!active) return
                     val packet = pending.pollFirst() ?: return
-                    if (packet.generation == generation) decode(packet)
+                    if (packet.generation == generation) {
+                        val began = SystemClock.elapsedRealtimeNanos()
+                        decode(packet)
+                        decodeMaxUs = maxOf(decodeMaxUs, (SystemClock.elapsedRealtimeNanos() - began) / 1000)
+                    }
                     if (pending.isNotEmpty() && !posted) { posted = true; handler.post(this) }
                 }
             } catch (error: Exception) { fail(error) }
@@ -96,10 +109,13 @@ class H264Renderer(
     private fun decode(packet: Packet) {
         if (!surfaceView.holder.surface.isValid) return
         if (resetRequired) {
+            resetCount++
             // A new codec avoids stale decoder references and re-submits CSD with the next IDR.
             releaseCodec(); gotFirstKeyframe = false; resetRequired = false
         }
-        if (!gotFirstKeyframe && !packet.keyframe) { dropped++; sessionStats?.onFrameDropped(); return }
+        if (!gotFirstKeyframe && !packet.keyframe) {
+            dropped++; firstKeyframeDrop++; sessionStats?.onDecodeDropped(); return
+        }
         val nals = H264AccessUnit.validate(packet.bytes, packet.keyframe)
         if (codec == null) createCodec()
         val decoder = codec ?: return
@@ -107,15 +123,15 @@ class H264Renderer(
         if (packet.keyframe) {
             val config = H264AccessUnit.join(packet.bytes, nals.filter { it.type == 7 || it.type == 8 })
             if (!queue(decoder, config, packet.timestampUs, MediaCodec.BUFFER_FLAG_CODEC_CONFIG)) {
-                resetRequired = true; dropped++; sessionStats?.onFrameDropped(); return
+                resetRequired = true; dropped++; sessionStats?.onDecodeDropped(); return
             }
             val picture = H264AccessUnit.join(packet.bytes, nals.filter { it.type != 7 && it.type != 8 })
             if (!queue(decoder, picture, packet.timestampUs, MediaCodec.BUFFER_FLAG_KEY_FRAME)) {
-                resetRequired = true; dropped++; sessionStats?.onFrameDropped(); return
+                resetRequired = true; dropped++; sessionStats?.onDecodeDropped(); return
             }
             gotFirstKeyframe = true // Only after the complete IDR has actually been accepted.
         } else if (!queue(decoder, packet.bytes, packet.timestampUs, 0)) {
-            resetRequired = true; dropped++; sessionStats?.onFrameDropped(); return
+            resetRequired = true; dropped++; sessionStats?.onDecodeDropped(); return
         }
         rawClockDeltaMs = (SystemClock.elapsedRealtimeNanos() / 1000 - packet.timestampUs) / 1000.0
         drainOutput()
@@ -183,7 +199,12 @@ class H264Renderer(
             // Show their raw difference, explicitly marked unsynchronized; never label it RTT.
             stats(String.format(Locale.US, "Δts %.1fms（未同步） | %.1f fps | drop %d", rawClockDeltaMs,
                 rendered * 1000.0 / (now - lastStats), dropped))
-            rendered = 0; lastStats = now
+            Log.d(TAG, String.format(Locale.US,
+                "h264 render_fps=%.1f queue_drop=%d first_keyframe_drop=%d reset_required=%d pending_peak=%d decode_max_ms=%.1f",
+                rendered * 1000.0 / (now - lastStats), queueDrop, firstKeyframeDrop, resetCount,
+                pendingPeak, decodeMaxUs / 1000.0))
+            rendered = 0; queueDrop = 0; firstKeyframeDrop = 0; resetCount = 0
+            pendingPeak = 0; decodeMaxUs = 0; lastStats = now
         }
     }
     private fun fail(error: Exception) {

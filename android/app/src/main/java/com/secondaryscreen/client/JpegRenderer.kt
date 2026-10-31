@@ -25,13 +25,15 @@ class JpegRenderer(private val surfaceView: SurfaceView, private val status: (St
     private var connectedText = ""
     private var frameCount = 0
     private var lastFpsMs = 0L
+    private var pendingOverwrites = 0
 
     fun resetFps(text: String) {
         main.post {
             synchronized(lock) {
                 session++
                 pending?.recycle(); pending = null
-                connectedText = text; frameCount = 0; lastFpsMs = SystemClock.elapsedRealtime()
+                connectedText = text; frameCount = 0; pendingOverwrites = 0
+                lastFpsMs = SystemClock.elapsedRealtime()
             }
         }
     }
@@ -49,7 +51,7 @@ class JpegRenderer(private val surfaceView: SurfaceView, private val status: (St
         synchronized(lock) {
             if (!active || generation != session) { bitmap.recycle(); return }
             // TODO(design): keep one pending decoded bitmap so a paused/slow UI cannot accumulate frames.
-            if (pending != null) sessionStats?.onFrameDropped()
+            if (pending != null) { pendingOverwrites++; sessionStats?.onRenderQueueOverwrite() }
             pending?.recycle()
             pending = bitmap
             if (!posted) {
@@ -80,7 +82,14 @@ class JpegRenderer(private val surfaceView: SurfaceView, private val status: (St
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastFpsMs >= 1000) {
                     val fps = frameCount * 1000.0 / (now - lastFpsMs)
+                    val overwrites = synchronized(lock) {
+                        val count = pendingOverwrites
+                        pendingOverwrites = 0
+                        count
+                    }
                     status(String.format(Locale.US, "%s  %.1f fps", connectedText, fps))
+                    Log.d("SecondaryScreen", String.format(Locale.US,
+                        "jpeg render_fps=%.1f pending_overwrite=%d", fps, overwrites))
                     frameCount = 0; lastFpsMs = now
                 }
             } catch (error: RuntimeException) {

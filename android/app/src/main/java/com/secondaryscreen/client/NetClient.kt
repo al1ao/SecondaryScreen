@@ -111,6 +111,7 @@ class NetClient(
                     val output = connection.getOutputStream()
                     control = Thread({
                         var lastPing = 0L
+                        var lastStatsLogUs = SystemClock.elapsedRealtimeNanos() / 1000
                         try {
                             while (running.get() && !Thread.currentThread().isInterrupted && !connection.isClosed) {
                                 val message = outgoing.poll(200, TimeUnit.MILLISECONDS)
@@ -118,6 +119,13 @@ class NetClient(
                                 if (message != null) output.write(message.bytes)
                                 if (now - lastPing >= 1_000_000) {
                                     output.write(makePing(now)); lastPing = now
+                                }
+                                if (now - lastStatsLogUs >= 1_000_000) {
+                                    val sample = stats.snapshot(now)
+                                    Log.d(TAG, "stat rx_fps=${sample.receivedFps} render_fps=${sample.renderFps} " +
+                                        "rx_kbps=${sample.bitrateKbps} gap=${sample.droppedGap} " +
+                                        "codec=$codecName ack=${ack.width}x${ack.height}@${ack.fps} display_fps_hint=$fps")
+                                    lastStatsLogUs = now
                                 }
                             }
                         } catch (_: InterruptedException) { } catch (error: IOException) {
@@ -137,12 +145,12 @@ class NetClient(
                             reconnectDelay.reset()
                             if (frame.frameId <= lastFrameId) throw ProtocolException("frame_id 未递增")
                             if (lastFrameId != 0L && frame.frameId > lastFrameId + 1) {
-                                stats.onFrameDropped(frame.frameId - lastFrameId - 1)
+                                stats.onFrameGap(frame.frameId - lastFrameId - 1)
                                 if (ack.codec == Codec.H264) h264Renderer.referenceGap()
                             }
                             lastFrameId = frame.frameId
-                            stats.onFrameReceived(frame.captureTsUs, SystemClock.elapsedRealtimeNanos() / 1000, frame.payloadSize)
-                            Log.d(TAG, "frame=${frame.frameId} payload_size=${frame.payloadSize} length=${header.length}")
+                            val nowUs = SystemClock.elapsedRealtimeNanos() / 1000
+                            stats.onFrameReceived(frame.captureTsUs, nowUs, frame.payloadSize)
                             if (ack.codec == Codec.JPEG)
                                 renderer.render(payload, Protocol.FRAME_INFO_SIZE, frame.payloadSize, ack.width, ack.height)
                             else h264Renderer.submit(payload, Protocol.FRAME_INFO_SIZE, frame.payloadSize,
