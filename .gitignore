@@ -22,3 +22,8 @@ Desktop.ini
 
 # Local development notes and specs (not part of the public repo)
 docs/
+
+# Local analysis artifacts and IDE config
+.ua/
+host/CMakeSettings.json
+tools/adb-diagnosis.txt
