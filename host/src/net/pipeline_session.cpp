@@ -1,11 +1,13 @@
 #include "net/pipeline_session.h"
 #include "net/frame_sender.h"
+#include "input/input_injector.h"
 #include <roapi.h>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <future>
 #include <thread>
+#include <mutex>
 #include "capture/wgc_capture.h"
 #include "capture/gdi_monitor_capture.h"
 #include "display/monitor_enum.h"
@@ -16,6 +18,7 @@
 #include "util/gpu.h"
 #include "util/timer.h"
 #include "util/timing_stats.h"
+#include "util/frame_dump.h"
 namespace pds {
 namespace {
 struct RawFrame { CapturedFrame cpu; GpuFrame gpu; };
@@ -58,7 +61,7 @@ struct PipelineSession::Impl {
         WinRtApartment apartment;
         try { if (apartment.Ready()) ReceiveLoop(); }
         catch (const std::exception& error) { LOG_ERROR("Session: ", error.what()); }
-        Stop(); JoinWorkers();
+        Stop(); JoinWorkers(); injector.Release();
         // All workers stop before COM/WinRT objects and the apartment are released.
         gpu_encoder.reset(); gpu_capture.reset(); jpeg_encoder.reset(); device.Reset();
         LOG_INFO("client disconnected; waiting for connection");
@@ -82,10 +85,17 @@ struct PipelineSession::Impl {
         else if ((hello.capabilities & (kCapCodecJpeg | kCapCodecH264)) == 0) ack.result = static_cast<uint16_t>(HelloResult::Codec);
         if (ack.result == 0) InitializePipeline(hello, ack);
         ack.server_time_us = NowUs();
+        const auto rotation = AckRotation(monitor.orientation, codec == Codec::H264);
+        ack.reserved0 = kAckCapTouchInput;
+        if (hello.capabilities & kCapRotateOutput)
+            ack.reserved0 |= static_cast<uint8_t>((rotation / 90u) << kAckRotationShift);
+        else if (monitor.orientation != 0 || rotation != 0)
+            LOG_WARN("Client does not advertise rotated output support; display orientation=", monitor.orientation);
         LOG_INFO("HELLO_ACK ready: handshake_ms=", static_cast<double>(ack.server_time_us - handshake_started) / 1000.0,
             " result=", ack.result, " codec=", static_cast<unsigned>(ack.codec));
         if (!running.load() || !SendHelloAck(socket.Get(), ack) || ack.result != 0) return;
-        LOG_INFO("HELLO_ACK ", width, 'x', height, " codec=", codec == Codec::H264 ? "H264" : "JPEG", " fps=", fps);
+        LOG_INFO("HELLO_ACK ", width, 'x', height, " codec=", codec == Codec::H264 ? "H264" : "JPEG",
+            " fps=", fps, " orientation=", monitor.orientation, " rotation=", rotation);
         if (codec == Codec::H264) capture_worker = std::jthread([this] { CaptureGpu(); });
         encode_worker = std::jthread([this] {
             try { Encode(); } catch (const std::exception& error) { LOG_ERROR("Encode worker: ", error.what()); Stop(); }
@@ -93,10 +103,42 @@ struct PipelineSession::Impl {
         send_worker = std::jthread([this] {
             try { Send(); } catch (const std::exception& error) { LOG_ERROR("Send worker: ", error.what()); Stop(); }
         });
+        const auto initial_display = SignatureOf(monitor);
+        auto last_display_check = NowUs();
         while (running.load()) {
+            const auto now = NowUs();
+            if (now - last_display_check >= 1000000) {
+                last_display_check = now;
+                const auto current = ReadDisplaySignature(monitor);
+                if (!current || *current != initial_display) {
+                    if (current) LOG_INFO("Display changed: ", initial_display.width, 'x', initial_display.height,
+                        '@', initial_display.refresh, " orientation=", initial_display.orientation, " -> ",
+                        current->width, 'x', current->height, '@', current->refresh,
+                        " orientation=", current->orientation, "; reconnecting");
+                    else LOG_INFO("Selected display disappeared or changed identity; reconnecting");
+                    Stop(); break;
+                }
+            }
             if (!Readable(socket.Get(), 200)) continue;
             if (!ReadMessage(socket.Get(), header, payload)) break;
-            LOG_WARN("Ignoring unknown/unexpected client type: ", header.type);
+            const auto type = static_cast<MessageType>(header.type);
+            if (type == MessageType::Ping) {
+                Ping ping{};
+                const auto received = NowUs();
+                if (!Deserialize(std::span(payload.data(), header.length), ping)) continue;
+                if (received - last_ping_us < 100000) continue;
+                last_ping_us = received;
+                Pong pong{ping.client_send_us, received, 0};
+                const auto pong_header = Serialize(MakeHeader(MessageType::Pong, sizeof(Pong)));
+                std::lock_guard lock(write_mutex);
+                pong.host_send_us = NowUs();
+                const auto pong_bytes = Serialize(pong);
+                if (!TcpServer::SendAll(socket.Get(), pong_header.data(), pong_header.size()) ||
+                    !TcpServer::SendAll(socket.Get(), pong_bytes.data(), pong_bytes.size())) break;
+            } else if (type == MessageType::Input) {
+                TouchInput input{};
+                if (Deserialize(std::span(payload.data(), header.length), input)) injector.OnTouch(input);
+            } else LOG_WARN("Ignoring unknown/unexpected client type: ", header.type);
         }
     }
     void InitializePipeline(const Hello& hello, HelloAck& ack) {
@@ -126,8 +168,15 @@ struct PipelineSession::Impl {
                 if (!resized) { display_lost = true; return std::nullopt; }
                 monitor = *resized;
                 return VideoMode{monitor.width, monitor.height, monitor.refresh_rate ? monitor.refresh_rate : target.fps};
+            },
+            [&] {
+                std::vector<VideoMode> modes;
+                for (const auto& available : EnumerateDisplayModes(monitor.device_name))
+                    modes.push_back({available.width, available.height, available.fps});
+                return modes;
             });
         if (display_lost) { LogMissingVirtualMonitor(); ack.result = static_cast<uint16_t>(HelloResult::Resolution); return; }
+        injector.UpdateTarget(monitor.rect);
         LOG_INFO("Session selected display: ", Utf8(monitor.device_name), " (", Utf8(monitor.friendly_name), ") ", monitor.width, 'x', monitor.height);
         LOG_INFO("Pipeline options: wgc_throttle=", options.wgc_throttle ? "on" : "off", " queue_depth=", options.queue_depth,
             " target_fps=", mode.fps, " max_fps=", options.max_fps, " auto_resize=", options.auto_resize ? "on" : "off");
@@ -180,6 +229,14 @@ struct PipelineSession::Impl {
                 }
                 if (!within_budget("WGC initialization")) break;
                 if (initialized) {
+                    LOG_INFO("WGC item.Size=", capture->Width(), 'x', capture->Height(),
+                        " rcMonitor=", monitor.width, 'x', monitor.height,
+                        " orientation=", monitor.orientation);
+                    const auto output = NegotiateResolution(capture->Width(), capture->Height(),
+                        requested.width, requested.height, hello.decoder_max_width, hello.decoder_max_height,
+                        requested.width, requested.height);
+                    if (output.width < 2 || output.height < 2) { capture.reset(); continue; }
+                    width = output.width; height = output.height;
                     gpu_encoder = CreateBestEncoder(device.Get(), width, height, fps, options.bitrate_kbps);
                     if (!within_budget("MF encoder creation")) { gpu_encoder.reset(); break; }
                     if (!gpu_encoder) { capture.reset(); continue; }
@@ -190,10 +247,14 @@ struct PipelineSession::Impl {
                         WaitUntil(std::chrono::steady_clock::now() + std::chrono::milliseconds(5));
                     if (!within_budget("first WGC frame")) { gpu_encoder.reset(); break; }
                     if (first.texture) {
+                        LOG_INFO("First WGC frame texture=", first.width, 'x', first.height,
+                            " encoder=", width, 'x', height, " orientation=", monitor.orientation);
                         // MF initialization may span several WGC callbacks. Start
                         // with the newest owned texture, not an old startup frame.
                         GpuFrame newer;
                         while (capture->Capture(newer)) first = std::move(newer);
+                        if (!options.dump_first_frame.empty())
+                            DumpFirstFrame(first, options.dump_first_frame, "wgc", monitor.orientation);
                         gpu_capture = std::move(capture);
                         codec = Codec::H264;
                         RawFrame initial; initial.gpu = std::move(first); raw.Push(std::move(initial));
@@ -234,14 +295,22 @@ struct PipelineSession::Impl {
     void CaptureCpu(std::promise<std::pair<uint32_t, uint32_t>> ready) {
         bool signaled = false;
         try {
+            ComApartment apartment;
             auto capture = options.capture_primary ? CreateGdiCapture() : CreateGdiMonitorCapture(monitor, options.show_cursor);
             if (!capture->Initialize(width, height)) { ready.set_value({0, 0}); return; }
             ready.set_value({capture->Width(), capture->Height()}); signaled = true;
             const auto interval = std::chrono::microseconds(1000000u / fps);
             auto deadline = std::chrono::steady_clock::now();
+            bool dump_attempted = false;
             while (running.load()) {
                 RawFrame frame;
-                if (capture->Capture(frame.cpu)) raw_dropped.fetch_add(raw.Push(std::move(frame)));
+                if (capture->Capture(frame.cpu)) {
+                    if (!dump_attempted && !options.dump_first_frame.empty()) {
+                        dump_attempted = true;
+                        DumpFirstFrame(frame.cpu, options.dump_first_frame, "gdi", monitor.orientation);
+                    }
+                    raw_dropped.fetch_add(raw.Push(std::move(frame)));
+                }
                 else if (!options.capture_primary) { LOG_WARN("Selected GDI display unavailable; closing session for renegotiation"); Stop(); break; }
                 else LOG_WARN("GDI capture failed; skipping frame");
                 deadline = (std::max)(deadline + interval, std::chrono::steady_clock::now());
@@ -317,7 +386,8 @@ struct PipelineSession::Impl {
                 force_keyframe.store(true); encoded_dropped.fetch_add(1); continue;
             }
             const auto began = NowUs();
-            if (!SendFrame(socket.Get(), packet.frame, packet.id, codec)) break;
+            { std::lock_guard lock(write_mutex);
+              if (!SendFrame(socket.Get(), packet.frame, packet.id, codec)) break; }
             const auto now = NowUs();
             send_us += now - began; ++sent; last_id = packet.id;
             if (now - last_stats >= 5000000) {
@@ -345,6 +415,9 @@ struct PipelineSession::Impl {
     UniqueSocket socket;
     SessionOptions options;
     MonitorInfo monitor;
+    InputInjector injector;
+    std::mutex write_mutex;
+    uint64_t last_ping_us = 0;
     BoundedQueue<RawFrame> raw;
     BoundedQueue<Packet> packets;
     std::atomic<bool> running{false}, force_keyframe{false};

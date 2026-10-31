@@ -9,8 +9,8 @@ object DisplayValues {
             read().takeIf { it.first in 2..16384 && it.second in 2..16384 }
         } catch (_: RuntimeException) { null }
         val size = (if (api >= 30) attempt(maximum) else null) ?: attempt(real)
-        // TODO(design): both platform queries failed; retain the protocol's safe landscape default.
-        return size?.let { maxOf(it.first, it.second) to minOf(it.first, it.second) } ?: (1280 to 800)
+        // Preserve the physical orientation; only failed queries use the safe default.
+        return size ?: (1280 to 800)
     }
 
     fun readRefresh(api: Int, mode: () -> Float, legacy: () -> Float): Int = try {

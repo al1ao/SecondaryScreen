@@ -19,3 +19,6 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 *.swp
+
+# Local development notes and specs (not part of the public repo)
+docs/

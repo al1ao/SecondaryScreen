@@ -42,8 +42,13 @@ BOOL CALLBACK EnumMonitor(HMONITOR handle, HDC, LPRECT, LPARAM parameter) {
         monitor.width = static_cast<uint32_t>(native.rcMonitor.right - native.rcMonitor.left);
         monitor.height = static_cast<uint32_t>(native.rcMonitor.bottom - native.rcMonitor.top);
         DEVMODEW mode{}; mode.dmSize = sizeof(mode);
-        if (EnumDisplaySettingsW(native.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
-            monitor.refresh_rate = mode.dmDisplayFrequency;
+        if (EnumDisplaySettingsW(native.szDevice, ENUM_CURRENT_SETTINGS, &mode)) {
+            if (mode.dmDisplayFrequency > 1) monitor.refresh_rate = mode.dmDisplayFrequency;
+            if (mode.dmFields & DM_DISPLAYORIENTATION) monitor.orientation = mode.dmDisplayOrientation;
+            LOG_DEBUG("Display mode ", Utf8(monitor.device_name), " DEVMODE=", mode.dmPelsWidth, 'x',
+                mode.dmPelsHeight, " orientation=", monitor.orientation, " fields=", mode.dmFields,
+                " rect=", monitor.rect.left, ',', monitor.rect.top, ',', monitor.rect.right, ',', monitor.rect.bottom);
+        }
         DISPLAY_DEVICEW device{}; device.cb = sizeof(device);
         if (EnumDisplayDevicesW(native.szDevice, 0, &device, EDD_GET_DEVICE_INTERFACE_NAME)) {
             monitor.friendly_name = device.DeviceString; monitor.monitor_device_id = device.DeviceID;
@@ -106,6 +111,44 @@ std::vector<MonitorInfo> EnumerateMonitors() {
     }
     return state.monitors;
 }
+DisplaySignature SignatureOf(const MonitorInfo& monitor) {
+    return {monitor.width, monitor.height, monitor.refresh_rate, monitor.orientation};
+}
+std::optional<DisplaySignature> ReadDisplaySignature(const MonitorInfo& monitor) {
+    MONITORINFOEXW native{}; native.cbSize = sizeof(native);
+    if (!GetMonitorInfoW(monitor.hmonitor, &native) || monitor.device_name != native.szDevice) return std::nullopt;
+    DEVMODEW mode{}; mode.dmSize = sizeof(mode);
+    if (!EnumDisplaySettingsW(native.szDevice, ENUM_CURRENT_SETTINGS, &mode)) return std::nullopt;
+    return DisplaySignature{
+        static_cast<uint32_t>(native.rcMonitor.right - native.rcMonitor.left),
+        static_cast<uint32_t>(native.rcMonitor.bottom - native.rcMonitor.top),
+        mode.dmDisplayFrequency > 1 ? mode.dmDisplayFrequency : 0,
+        (mode.dmFields & DM_DISPLAYORIENTATION) ? mode.dmDisplayOrientation : 0
+    };
+}
+uint32_t AckRotation(uint32_t dmdo, bool wgc_path) {
+    // Both capture paths are assumed to deliver the composed desktop until a
+    // four-direction diagnostic on the target VDD proves otherwise. Keep the
+    // path-specific table here so measured corrections are isolated.
+    constexpr uint32_t wgc[] = {0, 0, 0, 0};
+    constexpr uint32_t gdi[] = {0, 0, 0, 0};
+    return (wgc_path ? wgc : gdi)[dmdo & 3u];
+}
+std::vector<DisplayMode> EnumerateDisplayModes(const std::wstring& device_name) {
+    std::vector<DisplayMode> modes;
+    if (device_name.empty()) return modes;
+    for (DWORD index = 0;; ++index) {
+        DEVMODEW mode{}; mode.dmSize = sizeof(mode);
+        if (!EnumDisplaySettingsExW(device_name.c_str(), index, &mode, 0)) break;
+        if (mode.dmPelsWidth < 2 || mode.dmPelsHeight < 2 || mode.dmPelsWidth > 16384 || mode.dmPelsHeight > 16384) continue;
+        if (mode.dmDisplayFrequency < 2 || mode.dmDisplayFrequency > 1000) continue;
+        const bool duplicate = std::any_of(modes.begin(), modes.end(), [&](const DisplayMode& known) {
+            return known.width == mode.dmPelsWidth && known.height == mode.dmPelsHeight && known.fps == mode.dmDisplayFrequency;
+        });
+        if (!duplicate) modes.push_back({mode.dmPelsWidth, mode.dmPelsHeight, mode.dmDisplayFrequency});
+    }
+    return modes;
+}
 std::optional<MonitorInfo> SelectTargetMonitor(std::span<const MonitorInfo> monitors,
     const std::wstring& preferred_name, bool capture_primary, const std::wstring& stable_id) {
     const auto preferred = Lower(preferred_name);
@@ -136,6 +179,7 @@ void LogMonitors(std::span<const MonitorInfo> monitors, HMONITOR selected) {
         const auto& monitor = monitors[index];
         LOG_INFO("  [", index, "] ", Utf8(monitor.device_name), " \"", Utf8(monitor.friendly_name), "\" ",
             monitor.width, 'x', monitor.height, " @", monitor.refresh_rate, "Hz (", monitor.rect.left, ',', monitor.rect.top, ')',
+            " orientation=", monitor.orientation,
             monitor.is_primary ? " PRIMARY" : "", monitor.hmonitor == selected ? " <-- selected" : "");
     }
 }

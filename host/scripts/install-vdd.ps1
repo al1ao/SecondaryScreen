@@ -2,9 +2,11 @@
 param(
     [switch]$DownloadOnly,
     [switch]$UseSecondaryScreenConfig,
-    [string]$CacheDirectory = (Join-Path $PSScriptRoot '../.tools/vdd-25.7.23')
+    [string]$CacheDirectory
 )
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 leaves $PSScriptRoot empty inside param() defaults.
+if (!$CacheDirectory) { $CacheDirectory = Join-Path $PSScriptRoot '../.tools/vdd-25.7.23' }
 try {
     $administrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (!$DownloadOnly -and !$administrator) { throw 'Administrator privileges required. Open PowerShell as administrator and run host\scripts\install-vdd.ps1 again. Use -DownloadOnly to verify the package without installing.' }

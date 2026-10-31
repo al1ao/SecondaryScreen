@@ -17,7 +17,8 @@ import java.util.Locale
 class H264Renderer(
     private val surfaceView: SurfaceView,
     private val stats: (String) -> Unit,
-    private val failed: (String) -> Unit
+    private val failed: (String) -> Unit,
+    private val sessionStats: SessionStats? = null
 ) {
     data class Support(val name: String?, val maxWidth: Int, val maxHeight: Int)
     private data class Packet(val bytes: ByteArray, val keyframe: Boolean, val timestampUs: Long, val generation: Int)
@@ -63,6 +64,7 @@ class H264Renderer(
             if (!active) return
             if (pending.size >= 2) {
                 dropped += pending.size
+                sessionStats?.onFrameDropped(pending.size.toLong())
                 pending.clear()
                 resetRequired = true // Losing a reference frame requires a new IDR, not just a newer P-frame.
             }
@@ -97,7 +99,7 @@ class H264Renderer(
             // A new codec avoids stale decoder references and re-submits CSD with the next IDR.
             releaseCodec(); gotFirstKeyframe = false; resetRequired = false
         }
-        if (!gotFirstKeyframe && !packet.keyframe) { dropped++; return }
+        if (!gotFirstKeyframe && !packet.keyframe) { dropped++; sessionStats?.onFrameDropped(); return }
         val nals = H264AccessUnit.validate(packet.bytes, packet.keyframe)
         if (codec == null) createCodec()
         val decoder = codec ?: return
@@ -105,15 +107,15 @@ class H264Renderer(
         if (packet.keyframe) {
             val config = H264AccessUnit.join(packet.bytes, nals.filter { it.type == 7 || it.type == 8 })
             if (!queue(decoder, config, packet.timestampUs, MediaCodec.BUFFER_FLAG_CODEC_CONFIG)) {
-                resetRequired = true; dropped++; return
+                resetRequired = true; dropped++; sessionStats?.onFrameDropped(); return
             }
             val picture = H264AccessUnit.join(packet.bytes, nals.filter { it.type != 7 && it.type != 8 })
             if (!queue(decoder, picture, packet.timestampUs, MediaCodec.BUFFER_FLAG_KEY_FRAME)) {
-                resetRequired = true; dropped++; return
+                resetRequired = true; dropped++; sessionStats?.onFrameDropped(); return
             }
             gotFirstKeyframe = true // Only after the complete IDR has actually been accepted.
         } else if (!queue(decoder, packet.bytes, packet.timestampUs, 0)) {
-            resetRequired = true; dropped++; return
+            resetRequired = true; dropped++; sessionStats?.onFrameDropped(); return
         }
         rawClockDeltaMs = (SystemClock.elapsedRealtimeNanos() / 1000 - packet.timestampUs) / 1000.0
         drainOutput()
@@ -170,6 +172,7 @@ class H264Renderer(
                 if (!surfaceView.holder.surface.isValid) { releaseCodec(); gotFirstKeyframe = false; return }
                 decoder.releaseOutputBuffer(index, true)
                 rendered++
+                sessionStats?.onFrameRendered(SystemClock.elapsedRealtimeNanos() / 1000)
             } else if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 Log.i(TAG, "H264 output format: ${decoder.outputFormat}")
             } else break

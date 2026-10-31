@@ -28,11 +28,12 @@ bool ParseSessionOptions(int argc, char** argv, SessionOptions& options) {
             if (text != "on" && text != "off") return false;
             options.wgc_throttle = text == "on"; continue;
         }
-        if (key == "--display") {
+        if (key == "--display" || key == "--dump-first-frame") {
             const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
             if (size <= 0) return false;
-            options.display_match.resize(static_cast<size_t>(size));
-            if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), options.display_match.data(), size)) return false;
+            auto& target = key == "--display" ? options.display_match : options.dump_first_frame;
+            target.resize(static_cast<size_t>(size));
+            if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), target.data(), size)) return false;
             continue;
         }
         uint32_t value = 0;

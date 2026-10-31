@@ -123,10 +123,14 @@ adb reverse tcp:51900 tcp:51900
 ```
 目标刷新率（如 144Hz）
     ↓ 不可用
-60Hz
+同比例候选：先平板原生尺寸的其他刷新率，再最接近的 16:10 尺寸
     ↓ 不可用
-保持当前分辨率
+60Hz 重试（无法枚举驱动模式时的保底路径）
+    ↓ 不可用
+保持当前分辨率（日志提示更新 VDD 配置）
 ```
+
+同比例回退会优先选平板原生尺寸，其次是不超过原生尺寸的最大模式；这样即使驱动缺少精确模式，平板也不会出现黑边。
 
 ---
 
@@ -161,6 +165,18 @@ JPEG（阶段回退，15fps 上限）
 - 用 SetupAPI 注册设备
 
 安装后需在 Windows「显示设置」中启用该显示器并选择「扩展这些显示器」。
+
+如果 VDD 已安装但模式列表里没有平板原生分辨率（例如旧版配置只含 16:9），以管理员身份运行：
+
+```powershell
+.\scripts\update-vdd-modes.ps1
+```
+
+脚本会备份现有 `vdd_settings.xml`，仅追加 `assets/vdd_settings.xml` 中缺少的模式（2944×1840 等 16:10 尺寸），然后重启虚拟显示设备使新模式生效；`-NoRestart` 可只改配置。
+
+新模板还包含 1840×2944 等竖屏模式。旧机器需重跑上面的脚本并重启 VDD。平板或 Windows 显示方向变化会触发会话重建。
+
+旋转诊断：在已解锁的交互式桌面中，分别把虚拟屏设为横向、纵向、横向翻转、纵向翻转；每种方向各运行一次 `secondaryscreen-host --dump-first-frame <目录> --verbose` 与 `secondaryscreen-host --disable-hardware --dump-first-frame <目录> --verbose`，连接客户端后查看生成的 `wgc-dmdo*.png` / `gdi-dmdo*.png`。日志同时记录 rcMonitor、DEVMODE 尺寸与朝向、WGC item.Size、首帧纹理尺寸。若某个方向画面异常，请保留对应 PNG 与日志以便排查。
 
 **卸载**：
 ```powershell

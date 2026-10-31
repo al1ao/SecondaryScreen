@@ -16,6 +16,10 @@ object Protocol {
     const val HELLO_SIZE = 32
     const val ACK_SIZE = 32
     const val FRAME_INFO_SIZE = 28
+    const val PING_SIZE = 8
+    const val PONG_SIZE = 24
+    const val INPUT_SIZE = 12
+    const val ACK_CAP_TOUCH_INPUT = 1
     const val FLAG_KEYFRAME = 1
     const val FLAG_END_OF_STREAM = 2
 }
@@ -26,12 +30,14 @@ object MessageType {
     const val STATS = 0x0020
     const val PING = 0x0030
     const val PONG = 0x0031
+    const val INPUT = 0x0040
     const val BYE = 0x00FF
 }
 object Capability {
     const val CODEC_JPEG = 1 shl 0
     const val CODEC_H264 = 1 shl 1
     const val CODEC_HEVC = 1 shl 2
+    const val ROTATE_OUTPUT = 1 shl 3
 }
 object Codec {
     const val JPEG = 1
@@ -41,8 +47,10 @@ object Codec {
 data class HelloAck(
     val version: Int, val result: Int, val codec: Int, val fps: Int,
     val width: Int, val height: Int, val bitrateKbps: Long,
-    val frameIntervalUs: Long, val serverTimeUs: Long
-)
+    val frameIntervalUs: Long, val serverTimeUs: Long, val capabilities: Int = 0
+) {
+    val rotationDegrees: Int get() = ((capabilities shr 1) and 0x3) * 90
+}
 data class FrameInfo(
     val frameId: Long, val codec: Int, val frameFlags: Int,
     val width: Int, val height: Int, val captureTsUs: Long, val payloadSize: Int
@@ -54,7 +62,7 @@ private fun little(bytes: ByteArray, length: Int): ByteBuffer =
     ByteBuffer.wrap(bytes, 0, length).order(ByteOrder.LITTLE_ENDIAN)
 
 fun makeHello(width: Int, height: Int, fps: Int, dpi: Int,
-              capabilities: Int = Capability.CODEC_JPEG or Capability.CODEC_H264,
+              capabilities: Int = Capability.CODEC_JPEG or Capability.CODEC_H264 or Capability.ROTATE_OUTPUT,
               decoderMaxWidth: Int = width, decoderMaxHeight: Int = height): ByteArray =
     ByteBuffer.allocate(Protocol.HEADER_SIZE + Protocol.HELLO_SIZE).order(ByteOrder.LITTLE_ENDIAN).apply {
         putInt(Protocol.MAGIC); putShort(MessageType.HELLO.toShort()); putShort(0)
@@ -65,18 +73,40 @@ fun makeHello(width: Int, height: Int, fps: Int, dpi: Int,
     }.array()
 
 fun sendHello(out: OutputStream, width: Int, height: Int, fps: Int, dpi: Int,
-              capabilities: Int = Capability.CODEC_JPEG or Capability.CODEC_H264,
+              capabilities: Int = Capability.CODEC_JPEG or Capability.CODEC_H264 or Capability.ROTATE_OUTPUT,
               decoderMaxWidth: Int = width, decoderMaxHeight: Int = height) {
     out.write(makeHello(width, height, fps, dpi, capabilities, decoderMaxWidth, decoderMaxHeight))
     out.flush()
+}
+private fun controlMessage(type: Int, size: Int, payload: ByteBuffer.() -> Unit): ByteArray =
+    ByteBuffer.allocate(Protocol.HEADER_SIZE + size).order(ByteOrder.LITTLE_ENDIAN).apply {
+        putInt(Protocol.MAGIC); putShort(type.toShort()); putShort(0); putInt(size)
+        payload()
+    }.array()
+
+fun makePing(clientSendUs: Long): ByteArray =
+    controlMessage(MessageType.PING, Protocol.PING_SIZE) { putLong(clientSendUs) }
+
+data class Pong(val clientSendUs: Long, val hostRecvUs: Long, val hostSendUs: Long)
+fun parsePong(bytes: ByteArray, length: Int): Pong {
+    if (length != Protocol.PONG_SIZE) throw ProtocolException("PONG length must be 24")
+    val b = little(bytes, length)
+    return Pong(b.long, b.long, b.long)
+}
+
+fun makeTouchInput(action: Int, pointer: Int, xPpm: Int, yPpm: Int): ByteArray {
+    require(action in 0..3 && pointer == 0 && xPpm in 0..1_000_000 && yPpm in 0..1_000_000)
+    return controlMessage(MessageType.INPUT, Protocol.INPUT_SIZE) {
+        putShort(action.toShort()); putShort(pointer.toShort()); putInt(xPpm); putInt(yPpm)
+    }
 }
 fun parseHelloAck(bytes: ByteArray, length: Int): HelloAck {
     if (length != Protocol.ACK_SIZE) throw ProtocolException("HELLO_ACK 长度必须为 32")
     val b = little(bytes, length)
     val version = b.u16(); val result = b.u16(); val codec = b.u8()
-    b.get()
+    val capabilities = b.u8()
     val fps = b.u16(); val width = b.int; val height = b.int
-    val ack = HelloAck(version, result, codec, fps, width, height, b.u32(), b.u32(), b.long)
+    val ack = HelloAck(version, result, codec, fps, width, height, b.u32(), b.u32(), b.long, capabilities)
     if (version != Protocol.VERSION) throw ProtocolException("协议版本不支持，请升级客户端")
     if (result != 0) throw ProtocolException(when (result) {
         1 -> "协议版本不支持，请升级客户端"

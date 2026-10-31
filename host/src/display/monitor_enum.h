@@ -11,10 +11,20 @@ struct MonitorInfo {
     HMONITOR hmonitor = nullptr;
     RECT rect{};
     uint32_t width = 0, height = 0, refresh_rate = 0;
+    uint32_t orientation = 0;
     bool is_primary = false, is_virtual = false;
 };
+struct DisplayMode { uint32_t width = 0, height = 0, fps = 0; };
+struct DisplaySignature {
+    uint32_t width = 0, height = 0, refresh = 0, orientation = 0;
+    bool operator==(const DisplaySignature&) const = default;
+};
+DisplaySignature SignatureOf(const MonitorInfo& monitor);
+std::optional<DisplaySignature> ReadDisplaySignature(const MonitorInfo& monitor);
+uint32_t AckRotation(uint32_t dmdo, bool wgc_path);
 bool IsVirtualDisplayName(const std::wstring& name);
 std::vector<MonitorInfo> EnumerateMonitors();
+std::vector<DisplayMode> EnumerateDisplayModes(const std::wstring& device_name);
 std::optional<MonitorInfo> SelectTargetMonitor(std::span<const MonitorInfo> monitors,
     const std::wstring& preferred_name, bool capture_primary, const std::wstring& stable_id = {});
 HMONITOR FindTargetMonitor(const std::wstring& preferred_name, std::wstring* out_name);

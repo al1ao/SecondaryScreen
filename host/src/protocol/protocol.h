@@ -17,9 +17,12 @@ constexpr uint16_t kFlagEndOfStream = 2;
 constexpr uint32_t kCapCodecJpeg = 1;
 constexpr uint32_t kCapCodecH264 = 2;
 constexpr uint32_t kCapCodecHevc = 4;
+constexpr uint32_t kCapRotateOutput = 8;
+constexpr uint8_t kAckCapTouchInput = 1;
+constexpr uint8_t kAckRotationShift = 1;
 enum class MessageType : uint16_t {
     Hello = 0x0001, HelloAck = 0x0002, VideoFrame = 0x0010,
-    Stats = 0x0020, Ping = 0x0030, Pong = 0x0031, Bye = 0x00FF
+    Stats = 0x0020, Ping = 0x0030, Pong = 0x0031, Input = 0x0040, Bye = 0x00FF
 };
 enum class HelloResult : uint16_t { Ok = 0, Version = 1, Codec = 2, Resolution = 3 };
 #pragma pack(push, 1)
@@ -32,7 +35,7 @@ struct Hello {
 };
 struct HelloAck {
     uint16_t protocol_version; uint16_t result;
-    uint8_t codec; uint8_t reserved0; uint16_t fps;
+    uint8_t codec; uint8_t reserved0; uint16_t fps; // reserved0: touch bit0, clockwise rotation bits1..2
     uint32_t width; uint32_t height; uint32_t bitrate_kbps;
     uint32_t frame_interval_us; uint64_t server_time_us;
 };
@@ -40,7 +43,13 @@ struct FrameInfo {
     uint32_t frame_id; uint8_t codec; uint8_t frame_flags; uint16_t reserved;
     uint32_t width; uint32_t height; uint64_t capture_ts_us; uint32_t payload_size;
 };
+struct Ping { uint64_t client_send_us; };
+struct Pong { uint64_t client_send_us; uint64_t host_recv_us; uint64_t host_send_us; };
+struct TouchInput { uint16_t action; uint16_t pointer; uint32_t x_ppm; uint32_t y_ppm; };
 #pragma pack(pop)
+static_assert(sizeof(Ping) == 8);
+static_assert(sizeof(Pong) == 24);
+static_assert(sizeof(TouchInput) == 12);
 static_assert(sizeof(MessageHeader) == 12);
 static_assert(sizeof(Hello) == 32);
 static_assert(sizeof(HelloAck) == 32);

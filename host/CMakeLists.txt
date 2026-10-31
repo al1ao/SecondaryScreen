@@ -22,9 +22,11 @@ add_library(secondaryscreen-core STATIC
     src/encode/h264_annex_b.cpp
     src/encode/gpu_nv12_converter.cpp
     src/util/gpu.cpp
+    src/util/frame_dump.cpp
     src/net/tcp_server.cpp
     src/net/frame_sender.cpp
     src/net/pipeline_session.cpp
+    src/input/input_injector.cpp
 )
 target_include_directories(secondaryscreen-core PUBLIC src)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/encode/bgra_to_nv12.hlsl" NV12_SHADER_SOURCE)
@@ -49,6 +51,14 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     add_executable(secondaryscreen-stage6-tests tests/stage6_tests.cpp)
+    add_executable(secondaryscreen-stage7-tests tests/stage7_input_tests.cpp)
+    add_executable(secondaryscreen-stage8-tests tests/stage8_rotation_tests.cpp)
+    target_link_libraries(secondaryscreen-stage8-tests PRIVATE secondaryscreen-core)
+    add_test(NAME stage8-rotation COMMAND secondaryscreen-stage8-tests)
+    set_tests_properties(stage8-rotation PROPERTIES TIMEOUT 10)
+    target_link_libraries(secondaryscreen-stage7-tests PRIVATE secondaryscreen-core)
+    add_test(NAME stage7-input COMMAND secondaryscreen-stage7-tests)
+    set_tests_properties(stage7-input PROPERTIES TIMEOUT 10)
     target_link_libraries(secondaryscreen-stage6-tests PRIVATE secondaryscreen-app)
     add_test(NAME stage6-adaptation COMMAND secondaryscreen-stage6-tests)
     set_tests_properties(stage6-adaptation PROPERTIES TIMEOUT 30)

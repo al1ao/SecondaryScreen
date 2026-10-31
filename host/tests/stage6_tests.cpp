@@ -75,7 +75,79 @@ void FallbackTest() {
     Check(actual.fps==30, "60Hz mode fallback never raises encoding above cap");
     actual=pds::AdaptDisplayMode(current,request,true,[](const pds::VideoMode& mode)->std::optional<pds::VideoMode>{return pds::VideoMode{mode.width,mode.height,120};});
     Check(actual.fps==120, "read-back display rate bounds encoder/ACK");
-    LOG_INFO("PASS stage 6: injected mode application 144 -> 60 -> current, read-back rate and cap protection; no display settings changed");
+    // Same-ratio fallback: exact 2944x1840@144 and @60 fail, driver offers only
+    // smaller 16:10 modes, so the largest one is applied instead of a 16:9 mode.
+    attempts.clear();
+    const std::vector<pds::VideoMode> smaller16x10{{1280,800,60},{1920,1080,60},{2560,1600,60}};
+    const auto apply2560=[&](const pds::VideoMode& mode)->std::optional<pds::VideoMode>{
+        attempts.push_back(mode);return mode.width==2560?std::optional(mode):std::nullopt;
+    };
+    actual=pds::AdaptDisplayMode(current,request,true,apply2560,[&]{return smaller16x10;});
+    Check(actual.width==2560 && actual.height==1600 && actual.fps==60 && attempts.size()==2,
+        "largest same-ratio mode applied after exact failures");
+    Check(attempts[0].fps==144 && attempts[1].width==2560 && attempts[1].fps==60, "exact attempt precedes ratio fallback");
+    attempts.clear();
+    actual=pds::AdaptDisplayMode(current,request,true,[&](const pds::VideoMode& mode)->std::optional<pds::VideoMode>{
+        attempts.push_back(mode);return mode.fps==120?std::optional(mode):std::nullopt;
+    },[&]{return std::vector<pds::VideoMode>{{2944,1840,120},{2560,1600,60}};});
+    Check(actual.width==2944 && actual.height==1840 && actual.fps==120 && attempts.size()==2, "native size kept at a slower driver rate");
+    attempts.clear();
+    const std::vector<pds::VideoMode> broken_native{{2944,1840,144},{2560,1600,144}};
+    const auto rejectNative=[&](const pds::VideoMode& mode)->std::optional<pds::VideoMode>{
+        attempts.push_back(mode);return mode.width==2560?std::optional(mode):std::nullopt;
+    };
+    actual=pds::AdaptDisplayMode(current,request,true,rejectNative,[&]{return broken_native;});
+    Check(actual.width==2560 && actual.height==1600 && actual.fps==144 && attempts.size()==2,
+        "next same-ratio size tried when a listed native mode is rejected");
+    attempts.clear();
+    const std::vector<pds::VideoMode> native165{{2560,1600,144},{1280,800,60}};
+    actual=pds::AdaptDisplayMode(current,{2560,1600,165},true,
+        [&](const pds::VideoMode& mode)->std::optional<pds::VideoMode>{attempts.push_back(mode);return mode.fps==144?std::optional(mode):std::nullopt;},
+        [&]{return native165;});
+    Check(actual.fps==144 && attempts.size()==2 && attempts[1].fps==144, "native 144Hz preferred over the 60Hz retry for a 165Hz request");
+    attempts.clear();
+    actual=pds::AdaptDisplayMode(current,request,true,fail,[&]{return std::vector<pds::VideoMode>{{1920,1080,60},{2560,1440,120}};});
+    Check(attempts.size()==2 && actual.width==1920, "16:9 modes never stand in for a 16:10 request");
+    bool listed=false;
+    attempts.clear();
+    actual=pds::AdaptDisplayMode(current,request,false,fail,[&]{listed=true;return smaller16x10;});
+    Check(!listed && attempts.empty(), "disabled resize never enumerates driver modes");
+    LOG_INFO("PASS stage 6: injected mode application 144 -> 60 -> current, read-back rate and cap protection; same-ratio fallback; no display settings changed");
+}
+void SameRatioTest() {
+    using pds::VideoMode;
+    const std::vector<pds::VideoMode> modes{{1920,1080,60},{2560,1440,60},{3840,2160,60},
+        {1280,800,60},{1600,1000,60},{1920,1200,60},{2560,1600,60},{2944,1840,120}};
+    auto picked=pds::ChooseSameRatioMode(modes,{2944,1840,144});
+    Check(picked && picked->width==2944 && picked->height==1840 && picked->fps==120, "exact size with slower refresh than requested");
+    const auto ranked=pds::RankSameRatioModes(modes,{2944,1840,144});
+    Check(ranked.size()>=3 && ranked[0].width==2944 && ranked[1].width==2560 && ranked[2].width==1920,
+        "ranking orders native then largest-to-smallest same-ratio sizes");
+    picked=pds::ChooseSameRatioMode(modes,{3200,2000,60});
+    Check(picked && picked->width==2944 && picked->height==1840, "largest same-ratio mode not exceeding the request");
+    const std::vector<pds::VideoMode> below_only{{1280,800,60},{3840,2400,60}};
+    picked=pds::ChooseSameRatioMode(below_only,{2944,1840,144});
+    Check(picked && picked->width==1280 && picked->height==800, "below-only candidates prefer the largest");
+    const std::vector<pds::VideoMode> above_only{{3840,2400,60},{4096,2560,60}};
+    picked=pds::ChooseSameRatioMode(above_only,{2944,1840,144});
+    Check(picked && picked->width==3840 && picked->height==2400, "above-only candidates prefer the smallest");
+    const std::vector<pds::VideoMode> slow_native{{2944,1840,30},{2560,1600,144}};
+    picked=pds::ChooseSameRatioMode(slow_native,{2944,1840,144});
+    Check(picked && picked->width==2560 && picked->height==1600 && picked->fps==144, "60Hz+ mode beats native size stuck below 60Hz");
+    const std::vector<pds::VideoMode> only_slow_native{{2944,1840,30}};
+    picked=pds::ChooseSameRatioMode(only_slow_native,{2944,1840,144});
+    Check(picked && picked->width==2944 && picked->height==1840 && picked->fps==30, "only slow mode is still usable");
+    const std::vector<pds::VideoMode> wide_only{{1920,1080,60},{2560,1440,60}};
+    Check(!pds::ChooseSameRatioMode(wide_only,{2944,1840,144}), "16:9 modes are rejected for a 16:10 request");
+    const std::vector<pds::VideoMode> rate_list{{1920,1200,30},{1920,1200,90},{1920,1200,120},{1920,1200,165}};
+    picked=pds::ChooseSameRatioMode(rate_list,{2944,1840,100});
+    Check(picked && picked->fps==90, "fastest refresh not above the request");
+    const std::vector<pds::VideoMode> slow_list{{1920,1200,30},{1920,1200,60}};
+    picked=pds::ChooseSameRatioMode(slow_list,{2944,1840,20});
+    Check(picked && picked->fps==30, "slowest refresh when every mode exceeds the request");
+    Check(!pds::ChooseSameRatioMode({},{2944,1840,144}), "empty mode list has no fallback");
+    Check(!pds::ChooseSameRatioMode(modes,{0,0,144}), "invalid request has no fallback");
+    LOG_INFO("PASS stage 6: same-ratio mode choice (exact, nearest size, refresh preference, ratio rejection)");
 }
 void CadenceTest() {
     for (const auto hz : {90u,120u,144u,165u}) {
@@ -125,7 +197,7 @@ void SocketTest(uint32_t explicit_fps,uint32_t cap,uint16_t expected) {
 }
 int main() {
     try {
-        RequestTest();FallbackTest();CadenceTest();ConfigTest();
+        RequestTest();FallbackTest();SameRatioTest();CadenceTest();ConfigTest();
         pds::WinsockRuntime winsock;Check(winsock.Ready(),"Winsock ready");
         SocketTest(0,0,15);SocketTest(144,60,60);SocketTest(0,5,5);
         return 0;

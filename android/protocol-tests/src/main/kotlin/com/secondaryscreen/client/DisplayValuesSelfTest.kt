@@ -2,8 +2,8 @@ package com.secondaryscreen.client
 
 fun displayValuesSelfTest() {
     val unavailable: () -> Pair<Int, Int> = { error("not available") }
-    check(DisplayValues.readSize(30, { 1840 to 2944 }, unavailable) == (2944 to 1840))
-    check(DisplayValues.readSize(29, unavailable, { 1840 to 2944 }) == (2944 to 1840))
+    check(DisplayValues.readSize(30, { 1840 to 2944 }, unavailable) == (1840 to 2944))
+    check(DisplayValues.readSize(29, unavailable, { 1840 to 2944 }) == (1840 to 2944))
     check(DisplayValues.readSize(26, unavailable, { 1920 to 1200 }) == (1920 to 1200))
     check(DisplayValues.readSize(34, unavailable, { 2560 to 1600 }) == (2560 to 1600))
     check(DisplayValues.readSize(34, { 0 to 0 }, { 1920 to 1200 }) == (1920 to 1200))

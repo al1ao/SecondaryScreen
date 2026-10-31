@@ -16,7 +16,7 @@ struct SessionOptions {
     bool show_stats = false, show_cursor = true, disable_hardware = false;
     bool capture_primary = false, auto_resize = true, force_extend = false, list_displays = false;
     bool width_explicit = false, height_explicit = false;
-    std::wstring display_match, monitor_id;
+    std::wstring display_match, monitor_id, dump_first_frame;
 };
 class PipelineSession {
 public:

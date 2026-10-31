@@ -3,4 +3,17 @@
     <string name="app_name">SecondaryScreen</string>
     <string name="foreground_channel_name">SecondaryScreen 连接</string>
     <string name="foreground_notification_title">SecondaryScreen 保活已开启</string>
+    <string name="settings">设置</string>
+    <string name="display_settings">显示设置    ×</string>
+    <string name="show_fps">帧率显示</string>
+    <string name="show_link">链路显示</string>
+    <string name="show_latency">延迟显示</string>
+    <string name="touch_mode">触屏模式（单指）</string>
+    <string name="touch_unsupported">电脑端版本不支持触控</string>
+    <string name="reconnect_hint">分辨率/帧率更改后会重新连接</string>
+    <string name="follow_tablet">跟随平板</string>
+    <string name="native_resolution">平板原生 %1$d×%2$d</string>
+    <string name="black_bars_hint">（可能黑边）</string>
+    <string name="rate_follow">帧率：跟随平板</string>
+    <string name="rate_cap">帧率上限：%1$d</string>
 </resources>

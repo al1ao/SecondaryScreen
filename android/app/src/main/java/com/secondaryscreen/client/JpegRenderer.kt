@@ -13,7 +13,8 @@ import android.view.SurfaceView
 import java.net.ProtocolException
 import java.util.Locale
 
-class JpegRenderer(private val surfaceView: SurfaceView, private val status: (String) -> Unit) {
+class JpegRenderer(private val surfaceView: SurfaceView, private val status: (String) -> Unit,
+                   private val sessionStats: SessionStats? = null) {
     private val main = Handler(Looper.getMainLooper())
     private val lock = Any()
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
@@ -48,6 +49,7 @@ class JpegRenderer(private val surfaceView: SurfaceView, private val status: (St
         synchronized(lock) {
             if (!active || generation != session) { bitmap.recycle(); return }
             // TODO(design): keep one pending decoded bitmap so a paused/slow UI cannot accumulate frames.
+            if (pending != null) sessionStats?.onFrameDropped()
             pending?.recycle()
             pending = bitmap
             if (!posted) {
@@ -71,6 +73,7 @@ class JpegRenderer(private val surfaceView: SurfaceView, private val status: (St
                             canvas.drawColor(Color.BLACK)
                             canvas.drawBitmap(bitmap, null, fitCenter(bitmap.width, bitmap.height, canvas.width, canvas.height), paint)
                             frameCount++
+                            sessionStats?.onFrameRendered(SystemClock.elapsedRealtimeNanos() / 1000)
                         } finally { holder.unlockCanvasAndPost(canvas) }
                     }
                 }
